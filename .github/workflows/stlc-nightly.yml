@@ -1,0 +1,55 @@
+name: STLC Nightly
+
+on:
+  schedule:
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+
+jobs:
+  stlc-nightly:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: automation
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: automation/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers
+        run: npx playwright install chromium --with-deps
+
+      - name: Run full STLC pipeline with execution
+        env:
+          STLC_LLM_API_KEY: ${{ secrets.STLC_LLM_API_KEY }}
+          STLC_LLM_BASE_URL: ${{ secrets.STLC_LLM_BASE_URL }}
+          STLC_LLM_MODEL: ${{ secrets.STLC_LLM_MODEL }}
+          REGULAR_USER_USERNAME: ${{ secrets.REGULAR_USER_USERNAME }}
+          REGULAR_USER_PASSWORD: ${{ secrets.REGULAR_USER_PASSWORD }}
+        run: |
+          npm run stlc:orchestrator -- \
+            --url "https://www.saucedemo.com/inventory.html" \
+            --domain inventory \
+            --page InventoryPage \
+            --requirement-file ./requirements/inventory.md \
+            --profile full \
+            --run-tests \
+            --headless \
+            --overwrite
+
+      - name: Upload STLC report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stlc-nightly-report
+          path: |
+            automation/tmp/stlc/**
+            automation/reports/html/**
