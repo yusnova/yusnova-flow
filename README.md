@@ -219,7 +219,7 @@ Examples: `loginButton`, `usernameInput`, `submitOrderButton`, `countryDropdown`
 | Priority | Strategy | Confidence |
 |----------|----------|------------|
 | 1 | `data-testid` / `data-test-id` / `data-test` / `data-cy` / `data-qa` | high |
-| 2 | Stable `id` (e.g. `#login-form`) | medium |
+| 2 | Stable `id` (e.g. `#login-form`) | high |
 | 3 | `role` + accessible name | high |
 | 4 | `name`, `aria-label`, `placeholder` | medium |
 | 5 | Visible text (`button:has-text(...)`) | medium |
