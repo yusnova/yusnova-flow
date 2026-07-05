@@ -1,0 +1,6 @@
+# Regenerate via: npm run swagger:api (requires Java or Docker)
+api/
+model/
+base.ts
+configuration.ts
+index.ts

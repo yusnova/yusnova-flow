@@ -1,0 +1,5 @@
+export { Configuration, type ConfigurationParameters } from './configuration'
+export { BaseAPI } from './base'
+export { AuthApi } from './api/auth-api'
+export { ProductsApi } from './api/products-api'
+export * from './model'

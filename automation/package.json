@@ -1,0 +1,40 @@
+{
+  "name": "yusnova-flow-automation",
+  "version": "1.0.0",
+  "description": "Production-grade Playwright + TypeScript test automation framework",
+  "private": true,
+  "scripts": {
+    "demo:api": "ENV=demo npx playwright test --project=api",
+    "demo:ui": "ENV=demo npx playwright test --project=ui",
+    "report": "playwright show-report reports/html",
+    "codegen": "playwright codegen https://www.saucedemo.com",
+    "codegen:agent:help": "ts-node scripts/codegen-agent/index.ts --help",
+    "codegen:agent": "ts-node scripts/codegen-agent/index.ts",
+    "swagger:api": "npx @openapitools/openapi-generator-cli generate -i ${SWAGGER_PATH} -g typescript-axios -o core/api/generated --skip-validate-spec --additional-properties=withSeparateModelsAndApi=true,apiPackage=api,modelPackage=model,supportsES6=true",
+    "validate": "ts-node scripts/validator/test-validator.ts",
+    "lint": "eslint . --ext .ts",
+    "lint:fix": "eslint . --ext .ts --fix",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@faker-js/faker": "^9.9.0",
+    "axios": "^1.7.2",
+    "commander": "^14.0.3",
+    "dotenv": "^16.4.5",
+    "handlebars": "^4.7.9",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.61.0",
+    "@types/handlebars": "^4.0.40",
+    "@types/node": "^20.14.2",
+    "@typescript-eslint/eslint-plugin": "^8.62.1",
+    "@typescript-eslint/parser": "^8.62.1",
+    "eslint": "^8.57.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.4.5"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

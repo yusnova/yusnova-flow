@@ -1,0 +1,17 @@
+# Dependencies
+automation/node_modules/
+
+# Environment & secrets
+automation/.env
+automation/core/fixtures/auth-state.json
+
+# Playwright / test artifacts
+automation/reports/
+automation/test-results/
+automation/playwright-report/
+automation/blob-report/
+automation/tmp/
+
+# OS / IDE
+.DS_Store
+*.log
