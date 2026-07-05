@@ -11,11 +11,11 @@ test.describe('[InventoryPage] Explore', () => {
       await inventoryPage.selectProductSort("Price (high to low)")
       await inventoryPage.clickReactBurgerMenu()
       await inventoryPage.page.locator("#react-burger-cross-btn").click()
-      await inventoryPage.addProductToCart("sauce-labs-fleece-jacket")
-      await inventoryPage.addProductToCart("sauce-labs-backpack")
-      await inventoryPage.addProductToCart("sauce-labs-bolt-t-shirt")
-      await inventoryPage.addProductToCart("test.allthethings()-t-shirt-(red)")
-      await inventoryPage.addProductToCart("sauce-labs-bike-light")
+      await inventoryPage.addProductToCart("sample-jacket")
+      await inventoryPage.addProductToCart("sample-backpack")
+      await inventoryPage.addProductToCart("sample-tshirt")
+      await inventoryPage.addProductToCart("sample-red-tshirt")
+      await inventoryPage.addProductToCart("sample-light")
     })
     await test.step('Interact with inventory elements', async () => {
     })
@@ -55,7 +55,7 @@ test.describe('[InventoryPage] Core flows', () => {
       await inventoryPage.page.goto("/inventory.html")
     })
     await test.step('Add product to cart', async () => {
-      await inventoryPage.addProductToCart('sauce-labs-backpack')
+      await inventoryPage.addProductToCart('sample-backpack')
     })
     await test.step('Assert cart badge', async () => {
       await expect(inventoryPage.shoppingCartLink).toBeVisible()
@@ -154,8 +154,8 @@ test.describe('[InventoryPage] Edge cases', () => {
       await inventoryPage.page.goto("/inventory.html")
     })
     await test.step('Add first and last catalog products to cart', async () => {
-      await inventoryPage.addProductToCart('sauce-labs-backpack')
-      await inventoryPage.addProductToCart('test.allthethings()-t-shirt-(red)')
+      await inventoryPage.addProductToCart('sample-backpack')
+      await inventoryPage.addProductToCart('sample-red-tshirt')
     })
     await test.step('Assert cart badge shows boundary count of two items', async () => {
       await expect(inventoryPage.page.locator('.shopping_cart_badge')).toHaveText('2')

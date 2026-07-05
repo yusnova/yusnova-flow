@@ -24,7 +24,7 @@
 ```bash
 cd automation
 npm run stlc:orchestrator -- \
-  --url https://www.saucedemo.com/inventory.html \
+  --url https://demo.example.com/products \
   --domain inventory \
   --page InventoryPage \
   --requirement-file ./requirements/inventory.md \
@@ -35,7 +35,7 @@ With execution:
 
 ```bash
 npm run stlc:orchestrator -- \
-  --url https://www.saucedemo.com/inventory.html \
+  --url https://demo.example.com/products \
   --domain inventory \
   --page InventoryPage \
   --requirement "AC: User can sort products by price" \

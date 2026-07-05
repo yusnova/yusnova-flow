@@ -387,7 +387,7 @@ export class TestPlanner {
               this.makeCase('adding a product updates the cart badge count', 'happy-path', page, [
                 navigateStep(page, url),
                 makeStep('Add product to cart', [
-                  `await ${page}.addProductToCart('sauce-labs-backpack')`,
+                  `await ${page}.addProductToCart('sample-product')`,
                 ]),
                 makeStep('Assert cart badge', [
                   cartEl

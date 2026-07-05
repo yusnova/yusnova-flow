@@ -34,9 +34,11 @@ jobs:
           STLC_LLM_MODEL: ${{ secrets.STLC_LLM_MODEL }}
           REGULAR_USER_USERNAME: ${{ secrets.REGULAR_USER_USERNAME }}
           REGULAR_USER_PASSWORD: ${{ secrets.REGULAR_USER_PASSWORD }}
+          STLC_TARGET_URL: ${{ vars.STLC_TARGET_URL }}
         run: |
+          TARGET_URL="${STLC_TARGET_URL:-https://demo.example.com/products}"
           npm run stlc:orchestrator -- \
-            --url "https://www.saucedemo.com/inventory.html" \
+            --url "$TARGET_URL" \
             --domain inventory \
             --page InventoryPage \
             --requirement-file ./requirements/inventory.md \

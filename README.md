@@ -106,7 +106,7 @@ Set `ENV` before running Playwright (see `bootstrap/config.ts`):
 
 ```bash
 ENV=demo npx playwright test --project=ui
-ENV=aws-dev npx playwright test --project=api
+ENV=staging npx playwright test --project=api
 ```
 
 ---
@@ -117,6 +117,7 @@ Copy `.env.example` → `.env` and adjust as needed.
 
 | Variable | Purpose |
 |----------|---------|
+| `DEMO_BASE_URL` / `DEMO_LOGIN_URL` / `DEMO_API_BASE_URL` | Override demo URLs (defaults: `demo.example.com`, `api.example.com`) |
 | `REGULAR_USER_USERNAME` / `REGULAR_USER_PASSWORD` | Primary UI user (tests + codegen auto-login) |
 | `ADMIN_USER_USERNAME` / `ADMIN_USER_PASSWORD` | Secondary UI user |
 | `API_REGULAR_USER_USERNAME` / `API_REGULAR_USER_PASSWORD` | API test credentials |
@@ -257,7 +258,7 @@ Wizard prompts: URL, domain, page class, explore, overwrite, headless.
 
 ```bash
 npm run codegen:agent -- \
-  --url https://your-app.example.com/products \
+  --url https://demo.example.com/products \
   --domain products \
   --page ProductsPage \
   --explore \
@@ -302,7 +303,7 @@ Human review gates are **auto-approved** in the wizard by default (local dev). U
 
 ```bash
 npm run stlc:orchestrator -- \
-  --url https://your-app.example.com/products \
+  --url https://demo.example.com/products \
   --domain products \
   --page ProductsPage \
   --requirement-file ./requirements/products.md \
@@ -315,7 +316,7 @@ npm run stlc:orchestrator -- \
 
 ```bash
 npm run stlc:orchestrator -- \
-  --url https://your-app.example.com/products \
+  --url https://demo.example.com/products \
   --domain products \
   --page ProductsPage \
   --requirement-file ./requirements/products.md \

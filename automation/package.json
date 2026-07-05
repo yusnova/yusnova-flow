@@ -7,7 +7,7 @@
     "demo:api": "ENV=demo npx playwright test --project=api",
     "demo:ui": "ENV=demo npx playwright test --project=ui",
     "report": "playwright show-report reports/html",
-    "codegen": "playwright codegen https://www.saucedemo.com",
+    "codegen": "playwright codegen https://demo.example.com",
     "codegen:agent:help": "ts-node scripts/codegen-agent/index.ts --help",
     "codegen:agent": "ts-node scripts/codegen-agent/index.ts",
     "stlc:orchestrator:help": "ts-node scripts/stlc-orchestrator/index.ts --help",

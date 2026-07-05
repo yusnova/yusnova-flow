@@ -34,7 +34,7 @@ export async function runInteractiveWizard(
 
     const url = await askRequired(rl, 1, 'Target page URL', {
       hint: 'The live page the STLC pipeline will analyse and generate tests for.',
-      example: 'https://www.saucedemo.com/inventory.html',
+      example: 'https://demo.example.com/products',
       validate: validateUrl,
     })
 

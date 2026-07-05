@@ -26,7 +26,7 @@ setup('[RegularUserSession] | verify that a regular user can successfully log in
 })
 
 setup('[AdminUserSession] | verify that an admin user can successfully log in', async ({ page }) => {
-  setup.skip(activeEnv === 'demo', 'locked_out_user cannot sign in on demo SauceDemo')
+  setup.skip(activeEnv === 'demo', 'admin user login skipped on demo environment')
 
   await setup.step('sign in as admin user on the login page', async () => {
     await uiLogin(page, adminUser)

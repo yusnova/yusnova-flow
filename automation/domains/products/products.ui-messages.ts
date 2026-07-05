@@ -7,7 +7,7 @@ export const ProductsUiMessages = {
     nameZToA: 'Name (Z to A)',
   },
   products: {
-    backpack: 'Sauce Labs Backpack',
-    onesie: 'Sauce Labs Onesie',
+    backpack: 'Sample Backpack',
+    onesie: 'Sample Onesie',
   },
 } as const

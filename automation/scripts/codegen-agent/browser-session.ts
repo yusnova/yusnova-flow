@@ -2,18 +2,13 @@ import * as dotenv from 'dotenv'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { chromium, type Browser, type BrowserContext, type Page } from '@playwright/test'
+import { configEnv } from '../../bootstrap/config'
 
 const AUTOMATION_ROOT = path.resolve(__dirname, '..', '..')
 const AUTH_STATE_FILE = path.join(AUTOMATION_ROOT, 'core/fixtures/auth-state.json')
 const FIXTURES_DIR = path.join(AUTOMATION_ROOT, 'core/fixtures')
 
 dotenv.config({ path: path.join(AUTOMATION_ROOT, '.env') })
-
-const LOGIN_URLS: Record<string, string> = {
-  demo: 'https://www.saucedemo.com',
-  dev: 'https://dev-saucedemo.net/beta/login',
-  staging: 'https://staging-saucedemo.net/beta/login',
-}
 
 export interface BrowserSessionOptions {
   url: string
@@ -67,8 +62,7 @@ function resolveStorageStatePath(explicit?: string): string | undefined {
 }
 
 function getLoginURL(): string {
-  const env = process.env['ENV']?.trim() ?? 'demo'
-  return LOGIN_URLS[env] ?? process.env['LOGIN_URL']?.trim() ?? LOGIN_URLS.demo!
+  return process.env['LOGIN_URL']?.trim() ?? configEnv.loginURL
 }
 
 function getCredentials(): { username: string; password: string } {

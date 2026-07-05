@@ -194,7 +194,7 @@ function buildInventoryHappyPath(
     )
   } else if ((text.includes('cart') || text.includes('add')) && hasAddToCartGroup) {
     steps.push(
-      makeStep('Add product to cart', [`await ${pageVar}.addProductToCart('sauce-labs-backpack')`]),
+      makeStep('Add product to cart', [`await ${pageVar}.addProductToCart('sample-product')`]),
       makeStep('Assert cart badge', [
         cartEl
           ? `await expect(${pageVar}.${cartEl.propertyName}).toBeVisible()`
@@ -404,8 +404,8 @@ function buildInventoryNegativeBoundary(
     } else {
       steps.push(
         makeStep('Add first and last catalog products to cart', [
-          `await ${pageVar}.addProductToCart('sauce-labs-backpack')`,
-          `await ${pageVar}.addProductToCart('test.allthethings()-t-shirt-(red)')`,
+          `await ${pageVar}.addProductToCart('sample-product')`,
+          `await ${pageVar}.addProductToCart('sample-red-tshirt')`,
         ]),
         makeStep('Assert cart badge shows boundary count of two items', [
           `await expect(${pageVar}.page.locator('.shopping_cart_badge')).toHaveText('2')`,

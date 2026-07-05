@@ -22,7 +22,7 @@ export async function runInteractiveWizard(): Promise<GeneratorOptions> {
 
     const url = await askRequired(rl, 1, 'Target page URL', {
       hint: 'The live page you want to generate a POM and spec from.',
-      example: 'https://www.example.com/inventory.html',
+      example: 'https://demo.example.com/products',
       validate: validateUrl,
     })
 
