@@ -29,8 +29,13 @@ export function labelFromElement(el: ElementInfo): string {
 }
 
 export function propertyNameFromElement(el: ElementInfo): string {
-  if (el.dataTest) return finalizePropertyName(nameFromDataTest(el.dataTest), el.kind)
-  if (el.dataTestId) return finalizePropertyName(nameFromDataTest(el.dataTestId), el.kind)
+  const testName =
+    el.dataTest ??
+    el.dataTestId ??
+    el.dataTestIdHyphen ??
+    el.dataCy ??
+    el.dataQa
+  if (testName) return finalizePropertyName(nameFromDataTest(testName), el.kind)
 
   if (el.kind === 'select') {
     if (el.name) return finalizePropertyName(wordsToCamel(el.name), el.kind)

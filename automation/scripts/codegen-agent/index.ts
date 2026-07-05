@@ -1,21 +1,11 @@
 #!/usr/bin/env ts-node
 import * as path from 'node:path'
 import { Command } from 'commander'
-import { CodegenAdapter } from './codegen-adapter'
-import { FixtureWriter } from './fixture-writer'
 import { runInteractiveWizard } from './interactive-wizard'
 import { normalizeDomainName } from './domain-name'
-import { normalizePageName, toPageVar } from './page-name'
-import { LocatorStrategy } from './locator-strategy'
-import { PageAnalyser } from './page-analyser'
-import { PageExplorer } from './page-explorer'
-import { PomWriter } from './pom-writer'
-import { SpecWriter } from './spec-writer'
-import { TestPlanner } from './test-planner'
+import { normalizePageName } from './page-name'
 import { GeneratorOptions } from './types'
-
-const AUTOMATION_ROOT = path.resolve(__dirname, '..', '..')
-const DEFAULT_EXPLORE_OUTPUT = path.join(AUTOMATION_ROOT, 'tmp/codegen-raw.ts')
+import { AUTOMATION_ROOT, runCodegenPipeline } from './pipeline'
 
 const HELP_AFTER = `
 What it does:
@@ -128,107 +118,34 @@ async function main(): Promise<void> {
 async function runGeneration(opts: GeneratorOptions): Promise<void> {
   const totalSteps = opts.explore ? 8 : 7
   let step = 0
-  let codegenFile = opts.codegenFile
 
   if (opts.explore) {
     step += 1
     log('step', `${step}/${totalSteps}  Exploring page (click-through flow)…`)
-    const explorer = new PageExplorer()
-    codegenFile = await explorer.explore({
-      url: opts.url,
-      headless: opts.headless,
-      outputPath: DEFAULT_EXPLORE_OUTPUT,
-      ...(opts.storageState ? { storageState: opts.storageState } : {}),
-    })
-    log('success', `     ✓  Recorded actions → ${relativePath(codegenFile)}`)
   }
 
   step += 1
   log('step', `${step}/${totalSteps}  Analysing page DOM…`)
-  const analyser = new PageAnalyser()
-  const elementMap = await analyser.analyse(opts.url, opts.headless, opts.storageState)
-  log('success', `     ✓  Found ${elementMap.elements.length} interactive element(s)`)
 
-  step += 1
-  log('step', `${step}/${totalSteps}  Resolving locators…`)
-  const strategy = new LocatorStrategy()
-  const resolved = strategy.resolve(elementMap.elements)
-  const lowConfidenceCount = resolved.filter((e) => e.locator.confidence === 'low').length
-  if (lowConfidenceCount > 0) {
-    log('warn', `     ${lowConfidenceCount} locator(s) have LOW confidence`)
+  const result = await runCodegenPipeline(opts)
+
+  log('success', `     ✓  Found elements and wrote artifacts`)
+  if (result.lowConfidenceCount > 0) {
+    log('warn', `     ${result.lowConfidenceCount} locator(s) have LOW confidence`)
   } else {
     log('success', '     ✓  All locators are high/medium confidence')
   }
+  log('success', `     ✓  ${result.totalCases} test case(s) [pattern: ${result.pattern}]`)
+  log('success', `     ✓  ${relativePath(result.pomPath)}`)
+  log('success', `     ✓  ${relativePath(result.fixturePath)}`)
+  log('success', `     ✓  ${relativePath(result.specPath)}`)
 
-  step += 1
-  log('step', `${step}/${totalSteps}  Building test plan…`)
-  const planner = new TestPlanner()
-  const plan = planner.generate({
-    pageName: opts.page,
-    domain: opts.domain,
-    url: opts.url,
-    elements: resolved,
+  printSummary({
+    pomPath: result.pomPath,
+    specPath: result.specPath,
+    totalCases: result.totalCases,
+    lowConfidenceCount: result.lowConfidenceCount,
   })
-  const totalCases = plan.testGroups.reduce((sum, g) => sum + g.cases.length, 0)
-  log('success', `     ✓  ${plan.testGroups.length} group(s), ${totalCases} test case(s) [pattern: ${plan.pattern}]`)
-
-  step += 1
-  log('step', `${step}/${totalSteps}  Processing codegen output…`)
-  const pageVar = toPageVar(opts.page)
-  const adapter = new CodegenAdapter()
-  const codegenActions = await adapter.run({
-    url: opts.url,
-    elements: resolved,
-    attemptCodegen: !opts.explore && !opts.noCodegen && !codegenFile,
-    pageVar,
-    ...(codegenFile ? { codegenFile } : {}),
-  })
-
-  if (codegenActions.length === 0) {
-    log('info', '     No codegen file found — proceeding from DOM analysis only.')
-    log('info', '     Tip: enable explore in the wizard or pass --codegen-file tmp/codegen-raw.ts')
-  } else {
-    log('success', `     ✓  Transformed ${codegenActions.filter((a) => !a.isRemoved).length} action(s)`)
-  }
-
-  step += 1
-  log('step', `${step}/${totalSteps}  Writing POM class…`)
-  const pomWriter = new PomWriter()
-  const pomPath = await pomWriter.write({
-    pageName: opts.page,
-    domain: opts.domain,
-    url: opts.url,
-    elements: resolved,
-    pattern: plan.pattern,
-    automationRoot: AUTOMATION_ROOT,
-    overwrite: opts.overwrite,
-  })
-  log('success', `     ✓  ${relativePath(pomPath)}`)
-
-  step += 1
-  log('step', `${step}/${totalSteps}  Writing domain fixture…`)
-  const fixtureWriter = new FixtureWriter()
-  const fixturePath = await fixtureWriter.write({
-    domain: opts.domain,
-    pageClassName: opts.page,
-    automationRoot: AUTOMATION_ROOT,
-    overwrite: opts.overwrite,
-  })
-  log('success', `     ✓  ${relativePath(fixturePath)}`)
-
-  step += 1
-  log('step', `${step}/${totalSteps}  Writing spec file…`)
-  const specWriter = new SpecWriter()
-  const specPath = await specWriter.write({
-    plan,
-    testType: opts.type,
-    codegenActions,
-    automationRoot: AUTOMATION_ROOT,
-    overwrite: opts.overwrite,
-  })
-  log('success', `     ✓  ${relativePath(specPath)}`)
-
-  printSummary({ pomPath, specPath, totalCases, lowConfidenceCount })
 }
 
 type LogLevel = 'step' | 'info' | 'warn' | 'success' | 'error'

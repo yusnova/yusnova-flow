@@ -2,6 +2,9 @@ import * as fs from 'node:fs'
 import * as path from 'node:path'
 import Handlebars from 'handlebars'
 import { SPEC_TEMPLATE } from './templates/spec.template'
+import { consolidateTestGroups } from './describe-groups'
+import { mergeSpecPreservingManual, tagGeneratedSpec } from './spec-merge'
+import { toTestName } from './test-naming'
 import { toPageVar } from './page-name'
 import {
   CodegenAction,
@@ -40,7 +43,12 @@ export class SpecWriter {
       throw new Error(`Spec already exists: ${outPath} (use --overwrite to replace)`)
     }
 
-    const groups = this.annotateWithCodegen(plan.testGroups, opts.codegenActions, pageVar, testType)
+    const groups = this.annotateWithCodegen(
+      consolidateTestGroups(plan.testGroups),
+      opts.codegenActions,
+      pageVar,
+      testType,
+    )
     const data: SpecTemplateData = {
       domain: plan.domain,
       pageName: plan.pageName,
@@ -51,9 +59,15 @@ export class SpecWriter {
     }
 
     const compiled = hbs.compile(SPEC_TEMPLATE)
-    const content = cleanWhitespace(compiled(data))
+    let content = cleanWhitespace(compiled(data))
+    content = tagGeneratedSpec(content)
 
     fs.mkdirSync(specDir, { recursive: true })
+    if (fs.existsSync(outPath) && opts.overwrite) {
+      const existing = fs.readFileSync(outPath, 'utf-8')
+      content = mergeSpecPreservingManual(existing, content)
+    }
+
     fs.writeFileSync(outPath, content, 'utf-8')
     return outPath
   }
@@ -107,6 +121,7 @@ export class SpecWriter {
         testName: toTestName(tc.title),
         fixtures: this.resolveFixtures(tc.fixtures, testType, requiresApiSetup),
         steps,
+        ...(tc.fixme ? { fixme: true } : {}),
       }
     })
 
@@ -133,17 +148,6 @@ export class SpecWriter {
 
     return Array.from(parts).join(', ')
   }
-}
-
-function toTestName(title: string): string {
-  const words = title
-    .replace(/[^a-zA-Z0-9\s]/g, ' ')
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 3)
-
-  return words.map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join('')
 }
 
 function cleanWhitespace(raw: string): string {

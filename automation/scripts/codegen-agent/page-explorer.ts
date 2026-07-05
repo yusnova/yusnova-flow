@@ -2,6 +2,8 @@ import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { type Locator, type Page } from '@playwright/test'
 import { createAuthenticatedPage } from './browser-session'
+import { pickElementLocator } from './locator-priority'
+import { ElementInfo, ElementKind } from './types'
 
 export interface PageExploreOptions {
   url: string
@@ -176,15 +178,46 @@ export class PageExplorer {
   }
 
   private async resolveSelector(locator: Locator): Promise<string | null> {
-    const dataTest = await locator.getAttribute('data-test')
-    if (dataTest) return `[data-test="${dataTest}"]`
+    const attrs = await this.readElementAttributes(locator)
+    if (!attrs) return null
+    return pickElementLocator(attrs).selector
+  }
 
-    const dataTestId = await locator.getAttribute('data-testid')
-    if (dataTestId) return `[data-testid="${dataTestId}"]`
+  private async readElementAttributes(locator: Locator): Promise<ElementInfo | null> {
+    return locator.evaluate((el): ElementInfo | null => {
+      const node = el as HTMLElement & HTMLInputElement
+      const tag = node.tagName.toLowerCase()
+      const type = node.getAttribute('type') ?? undefined
+      const role = node.getAttribute('role') ?? (tag === 'button' ? 'button' : tag === 'a' ? 'link' : undefined)
+      const textContent = (node.textContent ?? '').trim().replace(/\s+/g, ' ').slice(0, 80) || undefined
 
-    const id = await locator.getAttribute('id')
-    if (id) return `#${id}`
+      let kind: ElementKind = 'unknown'
+      if (tag === 'button' || role === 'button') kind = 'button'
+      else if (tag === 'a') kind = 'link'
+      else if (tag === 'select') kind = 'select'
 
-    return null
+      return {
+        kind,
+        tagName: tag,
+        ...(type ? { type } : {}),
+        ...(node.id ? { id: node.id } : {}),
+        ...(node.getAttribute('data-testid') ? { dataTestId: node.getAttribute('data-testid')! } : {}),
+        ...(node.getAttribute('data-test-id') ? { dataTestIdHyphen: node.getAttribute('data-test-id')! } : {}),
+        ...(node.getAttribute('data-test') ? { dataTest: node.getAttribute('data-test')! } : {}),
+        ...(node.getAttribute('data-cy') ? { dataCy: node.getAttribute('data-cy')! } : {}),
+        ...(node.getAttribute('data-qa') ? { dataQa: node.getAttribute('data-qa')! } : {}),
+        ...(role ? { role } : {}),
+        ...(node.getAttribute('aria-label') ? { ariaLabel: node.getAttribute('aria-label')! } : {}),
+        ...(textContent ? { textContent, accessibleName: textContent } : {}),
+        ...(node.getAttribute('name') ? { name: node.getAttribute('name')! } : {}),
+        ...(node.getAttribute('placeholder') ? { placeholder: node.getAttribute('placeholder')! } : {}),
+        classes: Array.from(node.classList),
+        parentPath: '',
+        ancestorSelectors: [],
+        isRequired: false,
+        isDisabled: node.hasAttribute('disabled'),
+        index: 0,
+      }
+    }).catch(() => null)
   }
 }

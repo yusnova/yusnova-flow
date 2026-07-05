@@ -8,7 +8,7 @@ import {
 } from './types'
 import { toPageVar } from './page-name'
 import { actionMethodName } from './element-naming'
-import { collapseRepeatingLocators } from './repeating-locators'
+import { collapseRepeatingLocators, RepeatingLocatorGroup } from './repeating-locators'
 import { pomGroupListExpr, pomLocatorExpr, resolvePomElementByDataTest } from './pom-ref'
 import { gotoPathFromUrl } from './url-utils'
 
@@ -374,23 +374,7 @@ export class TestPlanner {
         apiSetupDescription: '',
         apiEndpoint: '',
         stateKey: '',
-        cases: sortEl
-          ? [
-              this.makeCase('sorting by price low to high reorders products', 'happy-path', page, [
-                navigateStep(page, url),
-                makeStep('Sort products', [
-                  `await ${page}.${actionMethodName(sortEl.propertyName, 'selectOption')}('Price (low to high)')`,
-                ]),
-                makeStep('Assert sort applied', [
-                  productNames
-                    ? `await expect(${pomLocatorExpr(page, productNames, 'first')}).toBeVisible()`
-                    : titleGroup?.listMethodName
-                      ? `await expect(${pomGroupListExpr(page, titleGroup, 'first')}).toBeVisible()`
-                      : `await expect(${page}.page).toHaveURL(/inventory/)`,
-                ]),
-              ]),
-            ]
-          : [],
+        cases: sortEl ? this.buildInventorySortCases(page, url, sortEl, productNames, titleGroup) : [],
       },
       {
         groupName: 'Cart',
@@ -494,6 +478,37 @@ export class TestPlanner {
           ),
       },
     ]
+  }
+
+  private buildInventorySortCases(
+    page: string,
+    url: string,
+    sortEl: ResolvedElement,
+    productNames: ResolvedElement | undefined,
+    titleGroup: RepeatingLocatorGroup | undefined,
+  ): TestCase[] {
+    const options = sortEl.selectOptions?.map((label) => label.trim()).filter(Boolean) ?? []
+    if (options.length === 0) return []
+
+    const sortMethod = actionMethodName(sortEl.propertyName, 'selectOption')
+    const listAssert = productNames
+      ? `await expect(${pomLocatorExpr(page, productNames, 'first')}).toBeVisible()`
+      : titleGroup?.listMethodName
+        ? `await expect(${pomGroupListExpr(page, titleGroup, 'first')}).toBeVisible()`
+        : `await expect(${page}.page).toHaveURL(/inventory/)`
+
+    return options.map((option) =>
+      this.makeCase(`sorting by ${option.toLowerCase()} updates the product list`, 'happy-path', page, [
+        navigateStep(page, url),
+        makeStep(`Sort products by ${option}`, [
+          `await ${page}.${sortMethod}(${JSON.stringify(option)})`,
+        ]),
+        makeStep('Assert product list remains visible after sort', [
+          listAssert,
+          `await expect(${page}.page).toHaveURL(/inventory/)`,
+        ]),
+      ]),
+    )
   }
 
   private makeCase(

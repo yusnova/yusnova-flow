@@ -14,12 +14,19 @@ export type ElementKind =
 
 export type LocatorStrategyName =
   | 'data-testid'
+  | 'data-test-id'
   | 'data-test'
+  | 'data-cy'
+  | 'data-qa'
+  | 'role'
   | 'id'
   | 'name'
   | 'aria-label'
   | 'placeholder'
+  | 'text'
+  | 'class-contains'
   | 'css-path'
+  | 'nth'
 
 export type LocatorConfidence = 'high' | 'medium' | 'low'
 
@@ -48,7 +55,12 @@ export interface ElementInfo {
   type?: string
   id?: string
   dataTestId?: string
+  dataTestIdHyphen?: string
   dataTest?: string
+  dataCy?: string
+  dataQa?: string
+  role?: string
+  accessibleName?: string
   name?: string
   ariaLabel?: string
   placeholder?: string
@@ -60,6 +72,8 @@ export interface ElementInfo {
   isRequired: boolean
   isDisabled: boolean
   index: number
+  /** Visible option labels for select elements (excludes empty placeholder options). */
+  selectOptions?: string[]
 }
 
 export interface ElementMap {
@@ -107,6 +121,7 @@ export interface TestCase {
   fixtures: string
   steps: TestStep[]
   requiresApiSetup: boolean
+  fixme?: boolean
 }
 
 export interface TestGroup {
@@ -169,6 +184,7 @@ export interface SpecCaseData {
   testName: string
   fixtures: string
   steps: SpecStepData[]
+  fixme?: boolean
 }
 
 export interface SpecGroupData {
