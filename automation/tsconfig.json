@@ -1,9 +1,9 @@
 {
   "compilerOptions": {
-    "target": "ES2022",
-    "module": "CommonJS",
-    "moduleResolution": "node",
-    "lib": ["ES2022", "DOM"],
+    "target": "ES2023",
+    "module": "Node16",
+    "moduleResolution": "node16",
+    "lib": ["ES2023", "DOM"],
     "strict": true,
     "noImplicitAny": true,
     "strictNullChecks": true,
@@ -19,13 +19,12 @@
     "skipLibCheck": true,
     "outDir": "./dist",
     "rootDir": "./",
-    "baseUrl": "./",
     "paths": {
-      "@bootstrap/*": ["bootstrap/*"],
-      "@core/*":     ["core/*"],
-      "@pages/*":    ["pages/*"],
-      "@domains/*":  ["domains/*"],
-      "@suites/*":   ["suites/*"]
+      "@bootstrap/*": ["./bootstrap/*"],
+      "@core/*":     ["./core/*"],
+      "@pages/*":    ["./pages/*"],
+      "@domains/*":  ["./domains/*"],
+      "@suites/*":   ["./suites/*"]
     }
   },
   "include": [
@@ -34,6 +33,7 @@
   "exclude": [
     "node_modules",
     "dist",
-    "reports"
+    "reports",
+    "tmp"
   ]
 }
