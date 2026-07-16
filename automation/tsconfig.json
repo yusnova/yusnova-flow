@@ -24,7 +24,8 @@
       "@core/*":     ["./core/*"],
       "@pages/*":    ["./pages/*"],
       "@domains/*":  ["./domains/*"],
-      "@suites/*":   ["./suites/*"]
+      "@suites/*":   ["./suites/*"],
+      "@codegen-agent/*": ["./scripts/codegen-agent/*"]
     }
   },
   "include": [
@@ -35,5 +36,9 @@
     "dist",
     "reports",
     "tmp"
-  ]
+  ],
+  "ts-node": {
+    "require": ["tsconfig-paths/register"],
+    "transpileOnly": true
+  }
 }

@@ -2,14 +2,14 @@
 import * as path from 'node:path'
 import { Command } from 'commander'
 import { runInteractiveWizard } from './interactive-wizard'
-import { normalizeDomainName } from './domain-name'
-import { normalizePageName } from './page-name'
+import { normalizeDomainName } from '@codegen-agent/naming/domain-name'
+import { normalizePageName } from '@codegen-agent/naming/page-name'
 import { GeneratorOptions } from './types'
 import { AUTOMATION_ROOT, runCodegenPipeline } from './pipeline'
 
 const HELP_AFTER = `
 What it does:
-  Analyses a live page, optionally clicks through elements to record a flow,
+  Analyses a live page, clicks through elements to record flows and scan modals,
   and generates:
     • pages/{page}-page.ts          → Page Object (POM)
     • suites/{domain}/{domain}.ui.spec.ts → Playwright spec
@@ -17,7 +17,8 @@ What it does:
 Interactive mode (default):
   npm run codegen:agent
 
-  Prompts for URL, domain, page name, explore and overwrite options.
+  Prompts for URL, domain, page name, and overwrite options.
+  Page exploration (click-through + modal scan) runs automatically.
   Type is fixed to ui for browser tests.
 
 Non-interactive mode (CI / scripts):
@@ -26,7 +27,6 @@ Non-interactive mode (CI / scripts):
     --domain domainName \\
     --page PomPageName \\
     --type ui \\
-    --explore \\
     --overwrite
 
 Flags:
@@ -34,7 +34,7 @@ Flags:
   --domain <name>     Feature folder name (suites/domainName/)
   --page <Name>       POM class name in PascalCase
   --type <ui|api|e2e> Spec type (default: ui)
-  --explore           Click through elements and record flow into the spec
+  --no-explore        Skip click-through exploration (enabled by default)
   --overwrite         Replace existing POM/spec files if they already exist
   --headless          Run browser without a visible window
   --storage-state     Optional auth JSON; auto-login via .env when omitted
@@ -52,7 +52,7 @@ function buildProgram(): Command {
     .option('--domain <domain>', 'feature folder name')
     .option('--page <page>', 'POM class name in PascalCase')
     .option('--type <type>', 'spec type: ui | api | e2e', 'ui')
-    .option('--explore', 'click through elements, record flow, and add to spec', false)
+    .option('--no-explore', 'skip click-through page exploration (explore is on by default)', false)
     .option(
       '--storage-state <path>',
       'optional auth JSON; auto-login with REGULAR_USER from .env when session is missing or expired',
@@ -62,7 +62,7 @@ function buildProgram(): Command {
     .option('--codegen-file <path>', 'pre-recorded Playwright codegen file (e.g. tmp/codegen-raw.ts)')
     .option('--no-codegen', 'skip the built-in Playwright codegen step')
     .addHelpText('after', HELP_AFTER)
-    .showHelpAfterError('(for full help: npm run codegen:agent:help)')
+    .showHelpAfterError('(for full help: npm run codegen:agent -- --help)')
 
   return program
 }
@@ -79,7 +79,7 @@ async function resolveOptions(): Promise<GeneratorOptions> {
     headless: boolean
     overwrite: boolean
     storageState?: string
-    explore: boolean
+    noExplore: boolean
     codegenFile?: string
     codegen: boolean
   }>()
@@ -101,7 +101,7 @@ async function resolveOptions(): Promise<GeneratorOptions> {
     type: raw.type as GeneratorOptions['type'],
     headless: raw.headless,
     overwrite: raw.overwrite,
-    explore: raw.explore,
+    explore: !raw.noExplore,
     noCodegen: raw.codegen === false,
     ...(raw.storageState ? { storageState: raw.storageState } : {}),
     ...(raw.codegenFile ? { codegenFile: raw.codegenFile } : {}),
@@ -121,7 +121,7 @@ async function runGeneration(opts: GeneratorOptions): Promise<void> {
 
   if (opts.explore) {
     step += 1
-    log('step', `${step}/${totalSteps}  Exploring page (click-through flow)…`)
+    log('step', `${step}/${totalSteps}  Exploring page (click-through + modal scan)…`)
   }
 
   step += 1
@@ -170,7 +170,7 @@ function printBanner(o: GeneratorOptions): void {
   Domain   : ${o.domain}
   Page     : ${o.page}
   Type     : ${o.type}
-  Explore  : ${o.explore}
+  Explore  : ${o.explore ? 'yes (default)' : 'no (--no-explore)'}
   Overwrite: ${o.overwrite}
   Headless : ${o.headless}
 ${o.storageState ? `  Auth     : ${o.storageState}` : ''}

@@ -44,6 +44,7 @@ export type PagePattern =
   | 'search'
   | 'inventory'
   | 'generic-form'
+  | 'interactive'
 
 export type TestType = 'ui' | 'api' | 'e2e'
 
@@ -74,6 +75,8 @@ export interface ElementInfo {
   index: number
   /** Visible option labels for select elements (excludes empty placeholder options). */
   selectOptions?: string[]
+  /** Overlay surface where the element was discovered (modal, dropdown panel, etc.). */
+  surfaceContext?: string
 }
 
 export interface ElementMap {
@@ -168,7 +171,7 @@ export interface PomTemplateData {
   pageName: string
   domain: string
   fileName: string
-  locators: Array<{ propertyName: string; selector: string }>
+  locators: Array<{ propertyName: string; selectorExpr: string }>
   locatorMethods: PomLocatorMethod[]
   methods: PomMethod[]
 }

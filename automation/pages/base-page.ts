@@ -36,6 +36,59 @@ export class BasePage {
     await this.page.getByRole('button', { name: text, exact }).nth(index).click()
   }
 
+  /** Root content region for load assertions (locator lives in POM only). */
+  get pageRoot(): Locator {
+    return this.page.locator('main, [role="main"], body').first()
+  }
+
+  get validationError(): Locator {
+    return this.page.locator('[role="alert"], [class*="error"]').first()
+  }
+
+  get searchResults(): Locator {
+    return this.page.locator('[data-testid*="result"], [role="list"]').first()
+  }
+
+  async expectPageLoaded(): Promise<void> {
+    await expect(this.pageRoot).toBeVisible()
+  }
+
+  async captureText(locator?: Locator): Promise<string> {
+    const target = locator ?? this.pageRoot
+    return ((await target.innerText().catch(() => '')) ?? '').trim()
+  }
+
+  async expectContentChanged(before: string, locator?: Locator): Promise<void> {
+    const target = locator ?? this.pageRoot
+    await expect
+      .poll(async () => ((await target.innerText().catch(() => '')) ?? '').trim(), { timeout: 10_000 })
+      .not.toBe(before)
+  }
+
+  async expectValidationError(): Promise<void> {
+    await expect(this.validationError).toBeVisible()
+  }
+
+  async expectSearchResults(): Promise<void> {
+    await expect(this.searchResults).toBeVisible()
+  }
+
+  async clickLinkByName(name: string): Promise<void> {
+    await this.page.getByRole('link', { name }).click()
+  }
+
+  async click(target: Locator): Promise<void> {
+    await target.click()
+  }
+
+  async fill(target: Locator, value: string): Promise<void> {
+    await target.fill(value)
+  }
+
+  async goBack(): Promise<void> {
+    await this.page.goBack()
+  }
+
   async clickButtonInTableCell(rowIndex: number, buttonIndex: number): Promise<void> {
     await this.page.locator(`#table-row-${rowIndex} button`).nth(buttonIndex).click()
   }

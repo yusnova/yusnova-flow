@@ -12,7 +12,7 @@ const AUTOMATION_ROOT = path.resolve(__dirname, '..')
 function main(): void {
   const program = new Command()
     .name('tmp:clean')
-    .description('Prune old STLC run folders and stale codegen scratch files under automation/tmp/')
+    .description('Prune old STLC run folders, bug-hunter exploration runs, and stale codegen scratch files under automation/tmp/')
     .option('--max-runs <n>', 'keep only the N most recent STLC runs', '15')
     .option('--max-age-days <n>', 'delete STLC runs older than N days', '14')
     .option('--dry-run', 'show what would be removed without deleting', false)
@@ -39,6 +39,7 @@ function main(): void {
     console.log(`
 Dry run — nothing deleted
   Would remove ${result.removed.length} STLC run folder(s)
+  Would remove ${result.explorationRemoved.length} exploration run folder(s)
   Current tmp size: ${formatBytes(before)}
 `)
     return
@@ -58,6 +59,8 @@ Dry run — nothing deleted
 Pruned automation/tmp
   STLC runs removed : ${result.removed.length}
   STLC runs kept    : ${result.kept}
+  Exploration removed: ${result.explorationRemoved.length}
+  Exploration kept   : ${result.explorationKept}
   Codegen scratch   : ${result.codegenRemoved.length} file(s)
   Size before       : ${formatBytes(before)}
   Size after        : ${formatBytes(after)}

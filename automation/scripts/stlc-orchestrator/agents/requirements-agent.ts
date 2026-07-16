@@ -92,7 +92,7 @@ export async function runRequirementsAgent(
   const rag = new DefectKnowledgeBase()
   const ragMatches = options.enableRag === false
     ? []
-    : rag.search(text, module)
+    : await rag.search(text, module)
 
   const useLlm = options.enableLlm !== false && createLlmClient().isEnabled()
   let ambiguityFlags: AmbiguityFlag[]

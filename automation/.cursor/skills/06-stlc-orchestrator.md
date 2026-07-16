@@ -75,23 +75,73 @@ STLC_LLM_MODEL=gpt-4o-mini                    # optional
 - Without key: heuristic fallback (no failure)
 - Disable explicitly: `--no-llm`
 
+## Flaky test intelligence
+
+- `execution-agent` records every pass/fail into `tmp/stlc/knowledge/test-history.json`
+  (per domain + case id, last 20 runs kept) via `flaky/test-history.ts`.
+- Flaky score = 0.5 × "mixedness" (how close to 50/50 pass/fail) + 0.5 × "flip
+  rate" (how often consecutive runs disagree). A test that always fails is a
+  regression, not flaky — it scores 0.
+- `triage-agent` checks history before opening a defect: a failing test with a
+  historical flaky score ≥ 0.5 gets severity downgraded to `minor` instead of
+  `major`/`critical`, so it does not block the quality gate on its own.
+- Inspect anytime: `npm run flaky:report -- --domain <domain>`.
+- Surfaced in every run's `quality-report.md` under "## Flaky tests".
+
 ## RAG (defect patterns)
 
 - Knowledge file: `tmp/stlc/knowledge/defect-patterns.json`
 - Seed data: `tmp/stlc/knowledge/defect-patterns.seed.json`
-- `requirements-agent` searches patterns and adds high-risk ambiguity flags
+- Embedding cache: `tmp/stlc/knowledge/defect-embeddings.json` (per-pattern vectors, content-hashed so stale entries auto-recompute)
+- `requirements-agent` searches patterns (`await rag.search(...)`) and adds high-risk ambiguity flags
 - `triage-agent` ingests new defects after nightly runs (feedback loop)
 - Disable: `--no-rag`
 
-Upgrade path: replace keyword search in `rag/defect-knowledge.ts` with embeddings (pgvector / OpenAI embeddings).
+### Hybrid keyword + semantic search
+
+`DefectKnowledgeBase.search()` is async and blends two signals:
+
+- **Keyword overlap** (always available, zero dependencies) — same as before.
+- **Semantic similarity** (cosine similarity over embeddings) — only when
+  `STLC_LLM_API_KEY` is set. Uses `STLC_EMBEDDING_MODEL` (default
+  `text-embedding-3-small`) via the OpenAI-compatible `/embeddings` endpoint
+  (`rag/embeddings.ts`).
+- Final score = `max(keyword, 0.4·keyword + 0.6·semantic)` — this lets a
+  paraphrased requirement match a historical defect with zero literal keyword
+  overlap (e.g. "cart" ↔ "basket").
+- If the embedding API call fails for any reason, `search()` falls back to
+  keyword-only silently — never throws, never blocks the pipeline.
+- `DefectKnowledgeBase` accepts an injectable `EmbeddingProvider` in its
+  constructor for testing without network calls (see
+  `rag/defect-knowledge.test.ts`).
 
 ## Self-healing (human approval required)
 
-- `execution-agent` detects locator failures
-- Creates `healingProposals[]` with `status: pending_human`
-- Never auto-applies selector changes to POM
-- Review proposals in `state.json`, then manually apply or build `healing/apply-proposal.ts` CLI later
-- Disable: `--no-self-healing`
+- `execution-agent` detects locator failures and only ever *proposes* fixes — it
+  never writes to POM/spec files itself. Every proposal is created with
+  `status: pending_human`.
+- Review and apply via the CLI (the **only** code path allowed to touch POM/spec
+  files for healing):
+
+  ```bash
+  npm run healing:review -- --run <runId>                          # list pending proposals
+  npm run healing:review -- --run <runId> --approve HEAL-123        # approve + apply one
+  npm run healing:review -- --run <runId> --reject HEAL-123         # reject one
+  npm run healing:review -- --run <runId> --approve-all --min-confidence 0.8
+  npm run healing:review -- --list-runs                             # find runs with pending proposals
+  ```
+
+- `--approve` / `--approve-all` call `applyHealingProposals()` in
+  `healing/auto-healer.ts`, which only writes selectors whose proposal has
+  `status: approved` and always skips lines tagged `@stlc:manual`.
+- Every approve/reject decision is appended to `auditTrail` with
+  `agent: healing-review-cli` for full traceability.
+- Disable proposal generation entirely: `--no-self-healing`.
+
+> Do not reintroduce automatic writes inside `execution-agent.ts` or
+> `buildAutoHealProposals()` — the `autoApplicable` flag on a proposal is only a
+> confidence/eligibility hint for the review CLI, not permission to skip human
+> review.
 
 ## CI profiles
 

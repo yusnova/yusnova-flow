@@ -18,8 +18,11 @@ All automation code lives under **`automation/`**. Run every `npm` command from 
 - [Selector (Locator) Standards](#selector-locator-standards)
 - [codegen:agent — DOM → POM + Spec](#codegenagent--dom--pom--spec)
 - [stlc:orchestrator — Agentic STLC Pipeline](#stlcorchestrator--agentic-stlc-pipeline)
+- [CI/CD — PR & Nightly Pipelines](#cicd--pr--nightly-pipelines)
+- [MCP Server, Quality Dashboard & Bug-Hunter Explorer](#mcp-server-quality-dashboard--bug-hunter-explorer)
 - [Validation, Lint & Unit Tests](#validation-lint--unit-tests)
 - [Debugging](#debugging)
+- [License](#license)
 - [Helpful Links](#helpful-links)
 
 ---
@@ -82,6 +85,31 @@ npm install
 npx playwright install
 ```
 
+### All npm scripts at a glance
+
+Plain JSON doesn't support comments, so descriptions live here instead of inline in `package.json`:
+
+| Script | What it does |
+|--------|---------------|
+| `demo:api` | Run the API test suite against the demo environment |
+| `demo:ui` | Run the UI test suite against the demo environment (headless Chrome) |
+| `report` | Open the last Playwright HTML report in a browser |
+| `codegen:agent` | Generate a POM + spec file from a live URL (DOM scan + Playwright codegen) |
+| `stlc:orchestrator` | Run the full agentic STLC pipeline: requirements → design → codegen → review → (execution) → reporting |
+| `validate` | Check a domain's POM/spec files against naming & fixture-wiring conventions |
+| `healing:review` | Human-in-the-loop review of self-healing selector proposals — the only place that writes fixes to POM/spec files |
+| `healing:from-log` | Build self-healing proposals from a CI Playwright failure log (no live browser needed) |
+| `flaky:report` | List tests flagged as flaky from historical run data |
+| `explore:bugs` | Autonomous crawler that clicks through a page and flags anomalies (JS/network errors, broken images) — no test cases needed |
+| `dashboard` | Start the local web UI for run history, self-healing review, and flaky reports (`http://localhost:4790`) |
+| `mcp:server` | Start the MCP server exposing the STLC pipeline as tools for Cursor/agent clients |
+| `test:impact` | Given changed files, report which test domains are affected (used by CI to run targeted tests) |
+| `test:unit` | Auto-discover and run every `scripts/**/*.test.ts` unit test file |
+| `tmp:clean` | Delete old STLC/exploration run folders and stale scratch files under `automation/tmp/` |
+| `lint` / `lint:fix` | Run ESLint / auto-fix what it can |
+| `typecheck` | Run the TypeScript compiler in `--noEmit` mode |
+| `swagger:api` | Generate a typed API client from a Swagger/OpenAPI spec (requires `SWAGGER_PATH` env var) |
+
 ### Run UI tests
 
 ```bash
@@ -124,6 +152,7 @@ Copy `.env.example` → `.env` and adjust as needed.
 | `STLC_LLM_API_KEY` | Optional — LLM for requirements/design agents |
 | `STLC_LLM_BASE_URL` | Optional — defaults to OpenAI-compatible endpoint |
 | `STLC_LLM_MODEL` | Optional — e.g. `gpt-4o-mini` |
+| `STLC_EMBEDDING_MODEL` | Optional — e.g. `text-embedding-3-small`; enables semantic RAG search when `STLC_LLM_API_KEY` is set |
 | `STLC_USE_LLM` | Set `true` to enable LLM in interactive wizard |
 | `STLC_TMP_KEEP_RUNS` | Max STLC run folders to keep (default `15`) |
 | `STLC_TMP_MAX_AGE_DAYS` | Delete STLC runs older than N days (default `14`) |
@@ -143,12 +172,24 @@ yusnova-flow/
 │   ├── requirements/              # Markdown AC files for STLC input
 │   ├── scripts/
 │   │   ├── codegen-agent/         # Standalone DOM → POM + spec generator
+│   │   │   ├── dom/               # Page exploration, DOM scanning, overlays
+│   │   │   ├── locators/          # Locator priority/strategy, element naming
+│   │   │   ├── naming/            # Domain/page/test name normalization
+│   │   │   ├── planning/          # Test planning, AC-grounded case design
+│   │   │   ├── writers/           # POM/spec/fixture code generation
+│   │   │   ├── safety/            # Link classification, destructive-action guard
+│   │   │   ├── utils/             # Codebase context scan, URL helpers
+│   │   │   └── templates/         # Handlebars templates for generated files
 │   │   ├── stlc-orchestrator/     # Full agentic STLC pipeline
+│   │   ├── mcp-server/            # MCP tools over the same STLC handlers
+│   │   ├── dashboard/             # Local quality dashboard (static UI + API)
+│   │   ├── explorer-agent/        # Autonomous bug-hunter crawler
 │   │   ├── validator/             # Convention checks for POM/spec
-│   │   └── shared/                # Codebase scanner, tmp cleanup
+│   │   └── shared/                # Codebase scanner, tmp cleanup, test impact
 │   ├── tmp/stlc/                  # STLC run state & reports (gitignored)
 │   ├── playwright.config.ts
 │   └── package.json
+├── LICENSE                        # MIT
 └── README.md
 ```
 
@@ -215,7 +256,7 @@ Examples: `loginButton`, `usernameInput`, `submitOrderButton`, `countryDropdown`
 
 ### Codegen locator priority
 
-`codegen:agent` and `stlc:orchestrator` use the same priority engine (`scripts/codegen-agent/locator-priority.ts`):
+`codegen:agent` and `stlc:orchestrator` use the same priority engine (`scripts/codegen-agent/locators/locator-priority.ts`):
 
 | Priority | Strategy | Confidence |
 |----------|----------|------------|
@@ -273,7 +314,7 @@ npm run codegen:agent -- \
 | Domain fixture | `domains/{domain}/{domain}.fixture.ts` |
 | UI spec | `suites/{domain}/{domain}.ui.spec.ts` |
 
-Help: `npm run codegen:agent:help`
+Help: `npm run codegen:agent -- --help`
 
 ---
 
@@ -324,7 +365,7 @@ npm run stlc:orchestrator -- \
   --skip-human-gates
 ```
 
-Help: `npm run stlc:orchestrator:help`
+Help: `npm run stlc:orchestrator -- --help`
 
 ### Pipeline phases
 
@@ -385,15 +426,52 @@ test('[ProductListVisibleOnPageLoad] | verify that the product list is visible w
 | `--no-tmp-prune` | Skip auto-cleanup of old `tmp/stlc` runs |
 | `--phases requirements,design,codegen,reporting` | Custom phase list |
 
-### Tmp cleanup
+### Self-healing review (human approval required)
 
-STLC creates a UUID folder per run under `tmp/stlc/`. Auto-pruned before each orchestrator start (keeps last 15 runs / 14 days).
+Selector failures produce `healingProposals[]` in `state.json` with `status: pending_human`. Nothing is ever written to a POM/spec file automatically — review and apply with:
 
 ```bash
-npm run tmp:clean          # prune old runs
-npm run tmp:clean:dry      # preview only
-npm run tmp:clean -- --max-runs 5
+npm run healing:review -- --run <runId>                          # list pending proposals
+npm run healing:review -- --run <runId> --approve HEAL-123        # approve + apply one
+npm run healing:review -- --run <runId> --reject HEAL-123         # reject one
+npm run healing:review -- --run <runId> --approve-all --min-confidence 0.8
+npm run healing:review -- --list-runs                             # find runs with pending proposals
 ```
+
+CI failures also generate reviewable proposals without needing a URL:
+
+```bash
+npm run healing:from-log -- --domain example --log-file playwright-output.txt
+```
+
+### Flaky test report
+
+Every execution is recorded to `tmp/stlc/knowledge/test-history.json`. Failing tests with a high historical flaky score are automatically downgraded to `minor` severity by the triage agent instead of blocking the quality gate.
+
+```bash
+npm run flaky:report                                  # all domains
+npm run flaky:report -- --domain example --min-score 0.5
+```
+
+### Tmp cleanup
+
+`automation/tmp/` holds ephemeral pipeline output. Nothing here should be committed or manually deleted under normal use — retention is automatic:
+
+| Path | What it stores | Auto-pruned when |
+|------|----------------|------------------|
+| `tmp/stlc/{uuid}/` | STLC run state + quality report | `stlc:orchestrator` starts (default: keep 15 runs / 14 days) |
+| `tmp/stlc/exploration/explore-*/` | Bug-hunter reports, JSON, screenshots | `explore:bugs` starts (same defaults) |
+| `tmp/stlc/knowledge/` | RAG defect patterns + flaky history | **Never** pruned |
+| `tmp/codegen-raw.ts` etc. | Codegen scratch files | Age > 14 days via `pruneAutomationTmp` |
+
+```bash
+npm run tmp:clean          # prune STLC + exploration runs + stale codegen scratch
+npm run tmp:clean -- --dry-run    # preview only
+npm run tmp:clean -- --max-runs 5
+npm run tmp:clean -- --all-runs   # wipe all runs (keeps knowledge/)
+```
+
+Override defaults with env vars `STLC_TMP_KEEP_RUNS` and `STLC_TMP_MAX_AGE_DAYS`, or per-command flags `--tmp-keep-runs` / `--tmp-max-age-days` on `stlc:orchestrator` and `explore:bugs`. Disable auto-prune with `--no-tmp-prune`.
 
 ### Requirement files
 
@@ -431,6 +509,80 @@ Design review may flag low-confidence cases. Without `--skip-human-gates`, codeg
 
 ---
 
+## CI/CD — PR & Nightly Pipelines
+
+Two GitHub Actions workflows live under `.github/workflows/`:
+
+| Workflow | Trigger | What it does |
+|----------|---------|----------------|
+| `stlc-pr.yml` | Pull request → `main` | Runs [test impact analysis](#test-impact-analysis) on the diff, then validator + Playwright for only the affected domain(s) (or the full suite if shared infra changed), and posts/updates a single summary comment on the PR |
+| `stlc-nightly.yml` | Daily cron (`0 2 * * *`) + manual dispatch | Full UI + API regression across every domain; on failure, builds self-healing proposals per domain and opens/updates a tracking issue labelled `stlc-nightly` |
+
+Both workflows never write to POM/spec files — failures only ever produce reviewable proposals (see [Self-healing review](#self-healing-review-human-approval-required)). Required secrets: `REGULAR_USER_USERNAME`, `REGULAR_USER_PASSWORD`, `ADMIN_USER_USERNAME`, `ADMIN_USER_PASSWORD`, `API_REGULAR_USER_USERNAME`, `API_REGULAR_USER_PASSWORD`, and optionally `STLC_LLM_API_KEY`.
+
+### Test impact analysis
+
+Maps changed files to affected test domains so CI (and you, locally) don't have to run the full suite for every change:
+
+```bash
+npm run test:impact -- --base origin/main --head HEAD   # git-diff based
+npm run test:impact -- --files automation/domains/inventory/inventory.fixture.ts
+npm run test:impact -- --all-domains --format json       # nightly: everything
+```
+
+Shared infrastructure changes (`core/`, `bootstrap/`, `pages/base-page.ts`, framework scripts, `package.json`, etc.) and any page file not linked to a domain fixture conservatively flip `runFullSuite: true` rather than silently skipping coverage.
+
+## MCP Server, Quality Dashboard & Bug-Hunter Explorer
+
+Three ways to reach the STLC pipeline besides the CLI, all built on the same handlers (`automation/scripts/mcp-server/handlers.ts`) so approve/reject/list behavior is identical everywhere.
+
+### MCP server — drive the pipeline from Cursor chat
+
+```bash
+cd automation
+npm run mcp:server   # stdio MCP server, for manual testing
+```
+
+Register it in `.cursor/mcp.json` (project or user-level) so Cursor's agent can call it directly:
+
+```json
+{
+  "mcpServers": {
+    "stlc": {
+      "command": "npx",
+      "args": ["ts-node", "scripts/mcp-server/server.ts"],
+      "cwd": "/absolute/path/to/yusnova-flow/automation"
+    }
+  }
+}
+```
+
+Exposes 13 tools: `stlc_list_runs`, `stlc_get_run`, `stlc_get_report`, `stlc_list_healing_proposals`, `stlc_approve_healing_proposal`, `stlc_reject_healing_proposal`, `stlc_approve_all_healing_proposals`, `stlc_flaky_report`, `stlc_test_impact`, `stlc_list_domains`, `stlc_validate_domain`, `stlc_run_pipeline`, `stlc_explore_bugs`. Approval tools only ever write to POM/spec files for the exact proposal id(s) a human explicitly asked to approve — same safety contract as `healing:review`.
+
+### Quality dashboard — visual run history & one-click healing review
+
+```bash
+cd automation
+npm run dashboard                       # http://localhost:4790
+DASHBOARD_PORT=5000 npm run dashboard   # custom port
+```
+
+Local web UI (zero build step) with four tabs: **Runs** (quality gate, coverage, click a row for the full report), **Self-Healing** (approve/reject proposals — writes to disk exactly like `healing:review`, with a confirmation prompt), **Flaky Tests**, and **Test Impact** (paste changed file paths, see affected domains).
+
+### Bug-hunter explorer — autonomous anomaly hunting, no test cases needed
+
+```bash
+cd automation
+npm run explore:bugs -- --url https://<host>/ --max-pages 8 --max-actions-per-page 15
+npm run explore:bugs -- --url https://<host>/ --headless --ingest-rag --module checkout
+```
+
+Crawls breadth-first, clicking through buttons/links, and flags anomalies — console errors, uncaught JS exceptions, failed/4xx/5xx network calls, visible error text (leaked stack traces, `[object Object]`, generic error-boundary copy), broken images — each with a screenshot and action trail. Output: `tmp/stlc/exploration/{runId}/{exploration-report.md, anomalies.json, screenshots/}`.
+
+`--ingest-rag` feeds critical/major anomalies into the same defect-pattern RAG knowledge base the requirements/design agents query, so a bug found by exploration informs the next `stlc:orchestrator` run's acceptance criteria. This never modifies application code — it only reads pages and writes reports under `tmp/`.
+
+See `automation/.cursor/skills/07-mcp-dashboard-explorer.md` for extension guidelines.
+
 ## Validation, Lint & Unit Tests
 
 ```bash
@@ -443,9 +595,9 @@ npm run typecheck
 # ESLint
 npm run lint
 
-# Codegen unit tests
-npm run test:locators
-npm run test:naming
+# Unit tests — auto-discovers every scripts/**/*.test.ts file, no per-file alias needed
+npm run test:unit
+npm run test:unit -- --filter healing   # only run files matching "healing"
 ```
 
 ---
@@ -471,6 +623,10 @@ STLC codegen with visible browser: wizard → **Show browser during generation =
 More: [Playwright debugging docs](https://playwright.dev/docs/debug)
 
 ---
+
+## License
+
+MIT — see [`LICENSE`](./LICENSE).
 
 ## Helpful Links
 

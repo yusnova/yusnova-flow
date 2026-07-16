@@ -41,6 +41,11 @@ export default defineConfig({
       use: { ...devices['Desktop Chrome'], storageState: AUTH_STATE_FILE },
       dependencies: ['setup'],
     },
+    {
+      name: 'ui-public',
+      testMatch: '**/*.ui.spec.ts',
+      use: { ...devices['Desktop Chrome'] },
+    },
   ],
 
   outputDir: 'reports/artifacts',

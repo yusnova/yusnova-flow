@@ -1,6 +1,6 @@
 import * as fs from 'node:fs'
 import * as path from 'node:path'
-import { isManualSpecLine, STLC_GENERATED_MARKER } from '../../codegen-agent/spec-merge'
+import { isManualSpecLine, STLC_GENERATED_MARKER } from '@codegen-agent/planning/spec-merge'
 import { CodebaseSelectorHint, scanCodebase } from '../../shared/codebase-scanner'
 import { HealingProposal } from '../types'
 
@@ -111,10 +111,16 @@ export function buildAutoHealProposals(
       failureEvidence: context.testTitle,
       confidence: 0.7,
       status: 'pending_human',
-      reason: `Codebase-informed selector fix from ${insights.scannedRoots.join(', ') || 'source scan'}`,
+      reason: `Codebase-informed selector fix from ${insights.scannedRoots.join(', ') || 'source scan'} — awaiting human approval (run "npm run healing:review")`,
       specPath: context.specPath,
       specLine: context.specLine,
       testTitle: context.testTitle,
+      // NOTE: "autoApplicable" is a confidence/eligibility hint consumed ONLY by the
+      // human-operated review CLI (healing/review-cli.ts). It must NEVER cause a
+      // write to disk on its own — a human must explicitly run `npm run healing:review
+      // -- --approve <id>` (or `--approve-all`) before any proposal reaches
+      // status "approved" and gets applied. Do not call applyHealingProposals()
+      // from pipeline agents.
       autoApplicable: true,
       createdAt: new Date().toISOString(),
     })
@@ -123,21 +129,46 @@ export function buildAutoHealProposals(
   return proposals
 }
 
-export function applyAutoHeals(
+export interface ApplyResult {
+  applied: HealingProposal[]
+  skipped: Array<{ proposal: HealingProposal; reason: string }>
+}
+
+/**
+ * Writes an APPROVED healing proposal to disk (POM + generated spec lines only).
+ *
+ * Safety contract:
+ * - Only proposals with `status === 'approved'` are written. This function is
+ *   the single write path for self-healing and must only ever be invoked from
+ *   `healing/review-cli.ts`, i.e. after an explicit human decision — never from
+ *   an orchestrator phase/agent, never as a side effect of running Playwright.
+ * - Manually authored spec lines (`@stlc:manual`) are always left untouched.
+ */
+export function applyHealingProposals(
   proposals: HealingProposal[],
   automationRoot: string,
-): HealingProposal[] {
+): ApplyResult {
   const applied: HealingProposal[] = []
+  const skipped: Array<{ proposal: HealingProposal; reason: string }> = []
 
   for (const proposal of proposals) {
-    if (!proposal.autoApplicable) continue
-    if (!fs.existsSync(proposal.pomFile)) continue
+    if (proposal.status !== 'approved') {
+      skipped.push({ proposal, reason: `status is "${proposal.status}", not "approved" — run healing:review to approve first` })
+      continue
+    }
+    if (!fs.existsSync(proposal.pomFile)) {
+      skipped.push({ proposal, reason: `POM file not found: ${proposal.pomFile}` })
+      continue
+    }
 
     let pomContent = fs.readFileSync(proposal.pomFile, 'utf-8')
     if (!pomContent.includes(proposal.oldSelector)) {
       const escaped = proposal.oldSelector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
       const loose = new RegExp(escaped)
-      if (!loose.test(pomContent)) continue
+      if (!loose.test(pomContent)) {
+        skipped.push({ proposal, reason: 'old selector no longer present in POM file (already changed?)' })
+        continue
+      }
     }
 
     pomContent = pomContent.replaceAll(proposal.oldSelector, proposal.proposedSelector)
@@ -154,8 +185,12 @@ export function applyAutoHeals(
       }
     }
 
-    applied.push({ ...proposal, status: 'applied', reason: `${proposal.reason} (auto-applied to generated tests only)` })
+    applied.push({
+      ...proposal,
+      status: 'applied',
+      reason: `${proposal.reason} — human-approved and applied on ${new Date().toISOString()}`,
+    })
   }
 
-  return applied
+  return { applied, skipped }
 }

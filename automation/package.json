@@ -1,29 +1,39 @@
 {
   "name": "yusnova-flow-automation",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Production-grade Playwright + TypeScript test automation framework",
+  "license": "MIT",
   "private": true,
   "scripts": {
     "demo:api": "ENV=demo npx playwright test --project=api",
     "demo:ui": "ENV=demo npx playwright test --project=ui",
     "report": "playwright show-report reports/html",
-    "codegen": "playwright codegen https://demo.example.com",
-    "codegen:agent:help": "ts-node scripts/codegen-agent/index.ts --help",
+
     "codegen:agent": "ts-node scripts/codegen-agent/index.ts",
-    "stlc:orchestrator:help": "ts-node scripts/stlc-orchestrator/index.ts --help",
     "stlc:orchestrator": "ts-node scripts/stlc-orchestrator/index.ts",
-    "tmp:clean": "ts-node scripts/tmp-cleanup-cli.ts",
-    "tmp:clean:dry": "ts-node scripts/tmp-cleanup-cli.ts --dry-run",
-    "swagger:api": "npx @openapitools/openapi-generator-cli generate -i ${SWAGGER_PATH} -g typescript-axios -o core/api/generated --skip-validate-spec --additional-properties=withSeparateModelsAndApi=true,apiPackage=api,modelPackage=model,supportsES6=true",
     "validate": "ts-node scripts/validator/test-validator.ts",
-    "test:locators": "ts-node scripts/codegen-agent/locator-priority.test.ts",
-    "test:naming": "ts-node scripts/codegen-agent/test-naming.test.ts",
+
+    "healing:review": "ts-node scripts/stlc-orchestrator/healing/review-cli.ts",
+    "healing:from-log": "ts-node scripts/stlc-orchestrator/healing/ci-heal-cli.ts",
+    "flaky:report": "ts-node scripts/stlc-orchestrator/flaky/flaky-report-cli.ts",
+    "explore:bugs": "ts-node scripts/explorer-agent/index.ts",
+
+    "dashboard": "ts-node scripts/dashboard/server.ts",
+    "mcp:server": "ts-node scripts/mcp-server/server.ts",
+
+    "test:impact": "ts-node scripts/shared/test-impact-cli.ts",
+    "test:unit": "ts-node scripts/run-unit-tests.ts",
+    "tmp:clean": "ts-node scripts/tmp-cleanup-cli.ts",
+
     "lint": "eslint . --ext .ts",
     "lint:fix": "eslint . --ext .ts --fix",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+
+    "swagger:api": "npx @openapitools/openapi-generator-cli generate -i ${SWAGGER_PATH} -g typescript-axios -o core/api/generated --skip-validate-spec --additional-properties=withSeparateModelsAndApi=true,apiPackage=api,modelPackage=model,supportsES6=true"
   },
   "dependencies": {
     "@faker-js/faker": "^9.9.0",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "axios": "^1.7.2",
     "commander": "^14.0.3",
     "dotenv": "^16.4.5",
@@ -38,6 +48,7 @@
     "@typescript-eslint/parser": "^8.62.1",
     "eslint": "^8.57.0",
     "ts-node": "^10.9.2",
+    "tsconfig-paths": "^4.2.0",
     "typescript": "^5.4.5"
   },
   "engines": {

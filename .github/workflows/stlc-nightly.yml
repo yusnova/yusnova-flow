@@ -1,0 +1,183 @@
+name: STLC Nightly Full Regression
+
+on:
+  workflow_dispatch:
+    inputs:
+      domain:
+        description: 'Limit to a single domain (optional)'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  discover-domains:
+    name: Discover domains
+    runs-on: ubuntu-latest
+    outputs:
+      domains_json: ${{ steps.discover.outputs.affected_domains_json }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: automation/package-lock.json
+      - name: Install dependencies
+        working-directory: automation
+        run: npm ci
+      - name: List domains
+        id: discover
+        working-directory: automation
+        run: |
+          if [ -n "${{ inputs.domain }}" ]; then
+            echo "affected_domains_json=[\"${{ inputs.domain }}\"]" >> "$GITHUB_OUTPUT"
+          else
+            npx ts-node scripts/shared/test-impact-cli.ts --all-domains --format github
+          fi
+
+  full-regression:
+    name: Full regression (${{ matrix.domain }})
+    needs: discover-domains
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        domain: ${{ fromJson(needs.discover-domains.outputs.domains_json) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: automation/package-lock.json
+
+      - name: Install dependencies
+        working-directory: automation
+        run: npm ci
+
+      - name: Install Playwright browsers
+        working-directory: automation
+        run: npx playwright install --with-deps
+
+      - name: Run UI suite
+        id: ui
+        working-directory: automation
+        continue-on-error: true
+        env:
+          ENV: demo
+          REGULAR_USER_USERNAME: ${{ secrets.REGULAR_USER_USERNAME }}
+          REGULAR_USER_PASSWORD: ${{ secrets.REGULAR_USER_PASSWORD }}
+          ADMIN_USER_USERNAME: ${{ secrets.ADMIN_USER_USERNAME }}
+          ADMIN_USER_PASSWORD: ${{ secrets.ADMIN_USER_PASSWORD }}
+        run: npx playwright test --project=ui "suites/${{ matrix.domain }}" 2>&1 | tee playwright-ui-${{ matrix.domain }}.log
+
+      - name: Run API suite
+        id: api
+        working-directory: automation
+        continue-on-error: true
+        env:
+          ENV: demo
+          API_REGULAR_USER_USERNAME: ${{ secrets.API_REGULAR_USER_USERNAME }}
+          API_REGULAR_USER_PASSWORD: ${{ secrets.API_REGULAR_USER_PASSWORD }}
+        run: npx playwright test --project=api "suites/${{ matrix.domain }}" 2>&1 | tee playwright-api-${{ matrix.domain }}.log || true
+
+      - name: Build self-healing proposals on UI failure
+        if: steps.ui.outcome == 'failure'
+        working-directory: automation
+        run: |
+          npx ts-node scripts/stlc-orchestrator/healing/ci-heal-cli.ts \
+            --domain ${{ matrix.domain }} \
+            --log-file playwright-ui-${{ matrix.domain }}.log || true
+
+      - name: Record domain result
+        if: always()
+        run: |
+          echo "${{ matrix.domain }}:${{ steps.ui.outcome }}" > domain-result-${{ matrix.domain }}.txt
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stlc-nightly-${{ matrix.domain }}
+          path: |
+            automation/playwright-ui-${{ matrix.domain }}.log
+            automation/playwright-api-${{ matrix.domain }}.log
+            automation/reports/html
+            automation/tmp/stlc/ci-nightly-*
+            domain-result-${{ matrix.domain }}.txt
+          retention-days: 30
+          if-no-files-found: ignore
+
+  triage:
+    name: Triage + open issue on failure
+    needs: full-regression
+    if: always() && needs.full-regression.result == 'failure'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: stlc-nightly-*
+          merge-multiple: true
+
+      - name: Summarize failures
+        id: summarize
+        run: |
+          FAILED=$(grep -l ':failure' domain-result-*.txt 2>/dev/null | sed 's/domain-result-//; s/\.txt//' | tr '\n' ',' | sed 's/,$//')
+          echo "failed_domains=$FAILED" >> "$GITHUB_OUTPUT"
+
+      - name: Open/update tracking issue
+        if: steps.summarize.outputs.failed_domains != ''
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const failedDomains = '${{ steps.summarize.outputs.failed_domains }}'.split(',').filter(Boolean)
+            const title = '🌙 STLC nightly regression failures'
+            const marker = '<!-- stlc-nightly-tracker -->'
+            const body = [
+              marker,
+              `**Run:** ${context.runId} — ${new Date().toISOString().slice(0, 10)}`,
+              '',
+              `**Failed domain(s):** ${failedDomains.map((d) => `\`${d}\``).join(', ')}`,
+              '',
+              `See workflow run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+              '',
+              'Self-healing proposals (if any) were generated per failing domain. Download the `stlc-nightly-<domain>` artifact and run:',
+              '```bash',
+              'npm run healing:review -- --list-runs',
+              '```',
+            ].join('\n')
+
+            const { data: issues } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'stlc-nightly',
+            })
+            const existing = issues.find((issue) => issue.body?.includes(marker))
+
+            if (existing) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: existing.number,
+                body,
+              })
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: existing.number,
+                body: `Still failing as of run ${context.runId}: ${failedDomains.join(', ')}`,
+              })
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title,
+                body,
+                labels: ['stlc-nightly'],
+              })
+            }

@@ -1,18 +1,19 @@
 import * as path from 'node:path'
-import { CodegenAdapter } from './codegen-adapter'
-import { loadCodebaseInsights, mergeCodebaseSelectors, resolveRepoRoot } from './codebase-context'
-import { FixtureWriter } from './fixture-writer'
-import { toPageVar } from './page-name'
-import { LocatorStrategy } from './locator-strategy'
-import { PageAnalyser } from './page-analyser'
-import { PageExplorer } from './page-explorer'
-import { PomWriter } from './pom-writer'
-import { SpecWriter } from './spec-writer'
-import { TestPlanner } from './test-planner'
-import { DesignedCaseMergeInput, mergeDesignCasesIntoPlan } from './design-case-merge'
-import { GeneratorOptions } from './types'
+import { CodegenAdapter } from '@codegen-agent/writers/codegen-adapter'
+import { loadCodebaseInsights, mergeCodebaseSelectors, resolveRepoRoot } from '@codegen-agent/utils/codebase-context'
+import { mergeElementInfos } from '@codegen-agent/dom/dom-scanner'
+import { FixtureWriter } from '@codegen-agent/writers/fixture-writer'
+import { toPageVar } from '@codegen-agent/naming/page-name'
+import { LocatorStrategy } from '@codegen-agent/locators/locator-strategy'
+import { PageAnalyser } from '@codegen-agent/dom/page-analyser'
+import { PageExplorer } from '@codegen-agent/dom/page-explorer'
+import { PomWriter } from '@codegen-agent/writers/pom-writer'
+import { SpecWriter } from '@codegen-agent/writers/spec-writer'
+import { TestPlanner } from '@codegen-agent/planning/test-planner'
+import { DesignedCaseMergeInput, mergeDesignCasesIntoPlan } from '@codegen-agent/planning/design-case-merge'
+import { GeneratorOptions, ElementInfo } from './types'
 
-export type { DesignedCaseMergeInput } from './design-case-merge'
+export type { DesignedCaseMergeInput } from '@codegen-agent/planning/design-case-merge'
 
 export const AUTOMATION_ROOT = path.resolve(__dirname, '..', '..')
 export const DEFAULT_EXPLORE_OUTPUT = path.join(AUTOMATION_ROOT, 'tmp/codegen-raw.ts')
@@ -39,22 +40,26 @@ export async function runCodegenPipeline(
   context: CodegenPipelineContext = {},
 ): Promise<CodegenPipelineResult> {
   let codegenFile = opts.codegenFile
+  let exploreElements: ElementInfo[] = []
 
   if (opts.explore) {
     const explorer = new PageExplorer()
-    codegenFile = await explorer.explore({
+    const exploreResult = await explorer.explore({
       url: opts.url,
       headless: opts.headless,
       outputPath: DEFAULT_EXPLORE_OUTPUT,
       ...(opts.storageState ? { storageState: opts.storageState } : {}),
     })
+    codegenFile = exploreResult.outputPath
+    exploreElements = exploreResult.discoveredElements
   }
 
   const analyser = new PageAnalyser()
   const elementMap = await analyser.analyse(opts.url, opts.headless, opts.storageState)
+  const mergedElements = mergeElementInfos(elementMap.elements, exploreElements)
 
   const strategy = new LocatorStrategy()
-  let resolved = strategy.resolve(elementMap.elements)
+  let resolved = strategy.resolve(mergedElements)
   const repoRoot = resolveRepoRoot(AUTOMATION_ROOT)
   const codebase = loadCodebaseInsights(repoRoot, opts.domain)
   resolved = mergeCodebaseSelectors(resolved, codebase.selectors, opts.domain)

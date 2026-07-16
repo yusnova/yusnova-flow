@@ -3,13 +3,17 @@ import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { Command } from 'commander'
 import * as dotenv from 'dotenv'
-import { normalizeDomainName } from '../codegen-agent/domain-name'
-import { normalizePageName } from '../codegen-agent/page-name'
+import { normalizeDomainName } from '@codegen-agent/naming/domain-name'
+import { normalizePageName } from '@codegen-agent/naming/page-name'
 import { GeneratorOptions } from '../codegen-agent/types'
 import { runInteractiveWizard } from './interactive-wizard'
 import { StlcOrchestrator } from './orchestrator'
+import {
+  shouldAutoSynthesizeRequirements,
+  synthesizeRequirements,
+} from './requirement-synthesizer'
 import { PR_PHASES } from './profiles'
-import { createInitialState } from './state/pipeline-state'
+import { createInitialState, appendAudit } from './state/pipeline-state'
 import { pruneAutomationTmp } from '../shared/tmp-cleanup'
 import { fatalError, log, relativePath } from './terminal'
 import { OrchestratorOptions, StlcPhase } from './types'
@@ -36,22 +40,22 @@ Interactive mode (default):
 
 Non-interactive mode (CI / scripts):
   npm run stlc:orchestrator -- \\
-    --url https://<host>/inventory.html \\
-    --domain inventory \\
-    --page InventoryPage \\
-    --requirement-file ./requirements/inventory.md \\
-    --explore \\
+    --url https://<host>/example.html \\
+    --domain example \\
+    --page ExamplePage \\
+    --requirement-file ./requirements/example.md \\
     --overwrite
 
 Flags:
   --url <url>              Target page URL
   --domain <name>          Feature folder name
   --page <Name>            POM class name
-  --requirement <text>     Inline acceptance criteria
-  --requirement-file <path> Requirement markdown/text file
+  --requirement <text>     Inline acceptance criteria (optional)
+  --requirement-file <path> Requirement markdown/text file (optional)
+  (no requirement)         AC auto-generated from live page + frontend/backend scan
   --profile <pr|full>      pr = skip test execution; full = include execution phase (prefer --run-tests)
   --run-tests              Execute Playwright after codegen
-  --explore                Record click-through before codegen
+  --no-explore             Skip click-through exploration (enabled by default)
   --overwrite              Replace existing generated files
   --skip-human-gates       Auto-approve review gates (wizard enables this by default)
   --headless               Hide browser during codegen
@@ -70,7 +74,7 @@ function buildProgram(): Command {
     .option('--type <type>', 'spec type: ui | api | e2e', 'ui')
     .option('--requirement <text>', 'inline requirement / acceptance criteria')
     .option('--requirement-file <path>', 'path to requirement markdown/text file')
-    .option('--explore', 'explore page before codegen', false)
+    .option('--no-explore', 'skip click-through page exploration (explore is on by default)', false)
     .option('--overwrite', 'overwrite generated artifacts', false)
     .option('--headless', 'headless browser', false)
     .option('--run-tests', 'execute Playwright after codegen', false)
@@ -88,7 +92,7 @@ function buildProgram(): Command {
     .option('--tmp-keep-runs <n>', 'max STLC run folders to retain (default: 15 or STLC_TMP_KEEP_RUNS)', '15')
     .option('--tmp-max-age-days <n>', 'delete STLC runs older than N days (default: 14 or STLC_TMP_MAX_AGE_DAYS)', '14')
     .addHelpText('after', HELP_AFTER)
-    .showHelpAfterError('(for full help: npm run stlc:orchestrator:help)')
+    .showHelpAfterError('(for full help: npm run stlc:orchestrator -- --help)')
 }
 
 function parsePhases(raw?: string): StlcPhase[] | undefined {
@@ -100,12 +104,39 @@ function readRequirement(opts: { requirement?: string; requirementFile?: string 
   if (opts.requirementFile) {
     return fs.readFileSync(path.resolve(opts.requirementFile), 'utf-8')
   }
-  if (opts.requirement) return opts.requirement
-  return [
-    'AC: User can view the product list',
-    'AC: User must be able to add items to cart',
-    'AC: User can sort products by price',
-  ].join('\n')
+  return opts.requirement?.trim() ?? ''
+}
+
+async function maybeSynthesizeRequirements(
+  requirementText: string,
+  requirementFile: string | undefined,
+  options: OrchestratorOptions,
+): Promise<string> {
+  if (!shouldAutoSynthesizeRequirements(requirementText, requirementFile)) {
+    return requirementText
+  }
+
+  log('info', '     No requirement provided — analyzing page + codebase for acceptance criteria...')
+  const repoRoot = path.resolve(AUTOMATION_ROOT, '..')
+  const synthesized = await synthesizeRequirements({
+    url: options.codegen.url,
+    domain: options.codegen.domain,
+    headless: options.codegen.headless,
+    repoRoot,
+  })
+
+  log(
+    'info',
+    `     Synthesized ${synthesized.acceptanceCriteria.length} AC line(s) from ${synthesized.sources.join(' + ')}`,
+  )
+  for (const ac of synthesized.acceptanceCriteria.slice(0, 6)) {
+    log('info', `       · ${ac}`)
+  }
+  if (synthesized.acceptanceCriteria.length > 6) {
+    log('info', `       · … and ${synthesized.acceptanceCriteria.length - 6} more`)
+  }
+
+  return synthesized.text
 }
 
 function buildCodegenOptions(raw: {
@@ -115,7 +146,7 @@ function buildCodegenOptions(raw: {
   type: string
   headless: boolean
   overwrite: boolean
-  explore: boolean
+  noExplore: boolean
   storageState?: string
   codegenFile?: string
   noCodegen: boolean
@@ -131,7 +162,7 @@ function buildCodegenOptions(raw: {
     type: raw.type as GeneratorOptions['type'],
     headless: raw.headless,
     overwrite: raw.overwrite,
-    explore: raw.explore,
+    explore: !raw.noExplore,
     noCodegen: raw.noCodegen,
     ...(raw.storageState ? { storageState: raw.storageState } : {}),
     ...(raw.codegenFile ? { codegenFile: raw.codegenFile } : {}),
@@ -154,7 +185,7 @@ async function resolveRun(): Promise<{
     type: string
     requirement?: string
     requirementFile?: string
-    explore: boolean
+    noExplore: boolean
     overwrite: boolean
     headless: boolean
     runTests: boolean
@@ -194,7 +225,7 @@ async function resolveRun(): Promise<{
     type: raw.type,
     headless: raw.headless,
     overwrite: raw.overwrite,
-    explore: raw.explore,
+    noExplore: raw.noExplore,
     noCodegen: raw.noCodegen,
     ...(raw.storageState ? { storageState: raw.storageState } : {}),
     ...(raw.codegenFile ? { codegenFile: raw.codegenFile } : {}),
@@ -234,16 +265,22 @@ function autoPruneTmp(config: { enabled: boolean; maxRuns: number; maxAgeDays: n
     maxAgeDays: config.maxAgeDays,
   })
 
-  if (result.removed.length > 0 || result.codegenRemoved.length > 0) {
+  if (result.removed.length > 0 || result.codegenRemoved.length > 0 || result.explorationRemoved.length > 0) {
     const parts = []
     if (result.removed.length > 0) parts.push(`${result.removed.length} STLC run(s)`)
+    if (result.explorationRemoved.length > 0) parts.push(`${result.explorationRemoved.length} exploration run(s)`)
     if (result.codegenRemoved.length > 0) parts.push(`${result.codegenRemoved.length} scratch file(s)`)
-    log('info', `     Pruned tmp: ${parts.join(', ')} (kept ${result.kept} recent run(s); knowledge/ preserved)`)
+    log('info', `     Pruned tmp: ${parts.join(', ')} (kept ${result.kept} STLC + ${result.explorationKept} exploration run(s); knowledge/ preserved)`)
   }
 }
 
-function printBanner(opts: OrchestratorOptions, requirementFile?: string): void {
+function printBanner(
+  opts: OrchestratorOptions,
+  requirementMeta: { file?: string; autoSynthesized: boolean },
+): void {
   const pipeline = opts.runTests ? 'generate + run tests' : 'generate only'
+  const requirementLabel = requirementMeta.file
+    ?? (requirementMeta.autoSynthesized ? '(auto from page + codebase)' : '(inline)')
   console.log(`
 \x1b[1m╔═══════════════════════════════════════╗
 ║   stlc:orchestrator  v0.1.0           ║
@@ -252,8 +289,8 @@ function printBanner(opts: OrchestratorOptions, requirementFile?: string): void 
   Domain      : ${opts.codegen.domain}
   Page        : ${opts.codegen.page}
   Pipeline    : ${pipeline}
-  Requirement : ${requirementFile ?? '(inline / demo AC)'}
-  Explore     : ${opts.codegen.explore}
+  Requirement : ${requirementLabel}
+  Explore     : ${opts.codegen.explore ? 'yes' : 'no (--no-explore)'}
   Overwrite   : ${opts.codegen.overwrite}
   Browser     : ${opts.codegen.headless ? 'hidden' : 'visible'}
   LLM         : ${opts.enableLlm ? 'yes' : 'no (heuristics)'}
@@ -298,17 +335,41 @@ ${result.codegenArtifacts
 }
 
 async function main(): Promise<void> {
-  const { requirementText, options, requirementFile, tmpPrune } = await resolveRun()
+  const { requirementText: rawRequirementText, options, requirementFile, tmpPrune } = await resolveRun()
 
   autoPruneTmp(tmpPrune)
-  printBanner(options, requirementFile)
 
-  const initialState = createInitialState(requirementText, options)
+  const autoSynthesized = shouldAutoSynthesizeRequirements(rawRequirementText, requirementFile)
+  const requirementText = await maybeSynthesizeRequirements(rawRequirementText, requirementFile, options)
+  options.requirementText = requirementText
+
+  printBanner(options, { ...(requirementFile ? { file: requirementFile } : {}), autoSynthesized })
+
+  let initialState = createInitialState(requirementText, options)
+  if (autoSynthesized) {
+    const acCount = requirementText.split('\n').map((line) => line.trim()).filter(Boolean).length
+    initialState = appendAudit(initialState, {
+      phase: 'requirements',
+      agent: 'requirement-synthesizer',
+      action: 'auto_synthesized_requirements',
+      reason: `Generated ${acCount} acceptance criteria from live page + frontend/backend scan`,
+      confidence: 0.82,
+    })
+  }
   const orchestrator = new StlcOrchestrator()
   const result = await orchestrator.run(initialState, options)
 
   if (result.state.humanGates.some((gate) => gate.status === 'pending')) {
     log('warn', 'Human review gates are pending — see state.json before release.')
+  }
+  const pendingHealing = (result.state.healingProposals ?? []).filter(
+    (proposal) => proposal.status === 'pending_human',
+  ).length
+  if (pendingHealing > 0) {
+    log(
+      'warn',
+      `${pendingHealing} self-healing proposal(s) awaiting human review: npm run healing:review -- --run ${result.state.runId}`,
+    )
   }
 
   printSummary({

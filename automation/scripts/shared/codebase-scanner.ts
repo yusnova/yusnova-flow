@@ -191,7 +191,11 @@ export function scanCodebase(repoRoot: string, domain?: string): CodebaseInsight
     const files = walkFiles(abs, repoRoot)
 
     for (const filePath of files) {
-      if (domainLower && !filePath.toLowerCase().includes(domainLower) && key !== 'automation') {
+      // Applies to every source, including the automation fallback: without this,
+      // "automation" (the STLC tooling's own code) bypassed domain relevance and
+      // got scanned as if it were the application under test, producing findings
+      // like "inspect auto-healer.ts" that have nothing to do with the SUT.
+      if (domainLower && !filePath.toLowerCase().includes(domainLower)) {
         const contentPeek = readFileSafe(repoRoot, filePath).toLowerCase()
         if (!contentPeek.includes(domainLower)) continue
       }

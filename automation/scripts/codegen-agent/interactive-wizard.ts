@@ -1,8 +1,8 @@
 import * as readline from 'node:readline/promises'
 import { stdin as input, stdout as output } from 'node:process'
 import { GeneratorOptions } from './types'
-import { normalizeDomainName, validateDomainInput } from './domain-name'
-import { normalizePageName, validatePageNameInput } from './page-name'
+import { normalizeDomainName, validateDomainInput } from '@codegen-agent/naming/domain-name'
+import { normalizePageName, validatePageNameInput } from '@codegen-agent/naming/page-name'
 
 const style = {
   bold: (text: string) => `\x1b[1m${text}\x1b[0m`,
@@ -12,7 +12,7 @@ const style = {
   yellow: (text: string) => `\x1b[33m${text}\x1b[0m`,
 }
 
-const TOTAL_STEPS = 5
+const TOTAL_STEPS = 4
 
 export async function runInteractiveWizard(): Promise<GeneratorOptions> {
   const rl = readline.createInterface({ input, output })
@@ -28,7 +28,7 @@ export async function runInteractiveWizard(): Promise<GeneratorOptions> {
 
     const domainInput = await askRequired(rl, 2, 'Domain name', {
       hint: 'Feature folder under suites/ and domains/. kebab-case, snake_case or PascalCase are all fine.',
-      example: 'inventory-page, inventory_page, products',
+      example: 'example-page, example_page, example',
       validate: validateDomainInput,
     })
     const domain = normalizeDomainName(domainInput)
@@ -38,7 +38,7 @@ export async function runInteractiveWizard(): Promise<GeneratorOptions> {
 
     const pageInput = await askRequired(rl, 3, 'Page class name', {
       hint: 'Name for the generated Page Object class. kebab-case, snake_case or PascalCase are all fine.',
-      example: 'inventory-page, inventory_page, InventoryPage',
+      example: 'example-page, example_page, ExamplePage',
       validate: validatePageNameInput,
     })
     const page = normalizePageName(pageInput)
@@ -46,17 +46,12 @@ export async function runInteractiveWizard(): Promise<GeneratorOptions> {
       console.log(`${style.dim('  Using class:')} ${style.green(page)}`)
     }
 
-    const explore = await askYesNo(rl, 4, 'Explore page elements?', {
-      hint: 'Clicks buttons, links and dropdowns on the page, records the flow, and adds it to the generated ui spec.',
-      defaultYes: true,
-    })
-
-    const overwrite = await askYesNo(rl, 5, 'Overwrite existing files?', {
-      hint: 'Replace pages/{Page}-page.ts and suites/{domain}/ if they already exist. Enable when the page structure changed; skip to keep hand-edited files.',
+    const overwrite = await askYesNo(rl, 4, 'Overwrite existing files?', {
+      hint: 'Regenerates POM + fixture. Spec: replaces only // @stlc:generated tests; hand-written tests stay. No = abort if files already exist.',
       defaultYes: false,
     })
 
-    const headless = await askYesNo(rl, 5, 'Run headless?', {
+    const headless = await askYesNo(rl, 4, 'Run headless?', {
       hint: 'Hide the browser window during generation. Leave off to watch the flow while debugging.',
       defaultYes: false,
       optionalStep: true,
@@ -67,7 +62,7 @@ export async function runInteractiveWizard(): Promise<GeneratorOptions> {
       domain,
       page,
       type: 'ui',
-      explore,
+      explore: true,
       overwrite,
       headless,
       noCodegen: false,
@@ -98,7 +93,7 @@ ${style.bold('━━ Summary ━━━━━━━━━━━━━━━━━
   Domain     : ${opts.domain}
   Page       : ${opts.page}
   Type       : ${opts.type}
-  Explore    : ${opts.explore ? 'yes' : 'no'}
+  Explore    : yes (always on)
   Overwrite  : ${opts.overwrite ? 'yes' : 'no'}
   Headless   : ${opts.headless ? 'yes' : 'no'}
 `)
@@ -169,8 +164,8 @@ async function askYesNo(
     }
     console.log(style.bold(title))
     console.log(style.dim(config.hint))
-    if (step === 4) {
-      console.log(`${style.dim('Test type:')} ${style.green('ui')} ${style.dim('(browser POM + *.ui.spec.ts)')}`)
+    if (!config.optionalStep && step === 4) {
+      console.log(`${style.dim('Explore:')} ${style.green('on')} ${style.dim('(click-through + modal scan — automatic)')}`)
     }
 
     const answer = (await rl.question(`${style.green('→')} ${style.dim(`(${defaultLabel})`)} `)).trim().toLowerCase()

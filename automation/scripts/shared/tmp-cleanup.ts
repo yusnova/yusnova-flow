@@ -4,8 +4,12 @@ import * as path from 'node:path'
 export interface TmpCleanupOptions {
   /** STLC output root, e.g. automation/tmp/stlc */
   stlcDir: string
+  /** Bug-hunter exploration output root, e.g. automation/tmp/stlc/exploration */
+  explorationDir?: string
   /** Keep at most this many recent run folders (UUID dirs). */
   maxRuns?: number
+  /** Keep at most this many recent exploration run folders (explore-* dirs). Defaults to maxRuns. */
+  maxExplorationRuns?: number | undefined
   /** Delete run folders older than this many days. */
   maxAgeDays?: number
   /** Do not delete — only report what would be removed. */
@@ -14,6 +18,8 @@ export interface TmpCleanupOptions {
   preserveDirs?: string[]
   /** Run folder names to always keep (e.g. current run). */
   keepRunIds?: string[]
+  /** Exploration run folder names to always keep. */
+  keepExplorationRunIds?: string[]
   /** Log removed paths to stdout. */
   verbose?: boolean
 }
@@ -22,12 +28,19 @@ export interface TmpCleanupResult {
   removed: string[]
   kept: number
   skipped: string[]
+  explorationRemoved: string[]
+  explorationKept: number
 }
 
 const UUID_DIR = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+const EXPLORE_RUN_DIR = /^explore-\d+$/i
 
-function isRunDir(name: string): boolean {
+function isStlcRunDir(name: string): boolean {
   return UUID_DIR.test(name)
+}
+
+function isExplorationRunDir(name: string): boolean {
+  return EXPLORE_RUN_DIR.test(name)
 }
 
 function dirModifiedMs(dirPath: string): number {
@@ -39,21 +52,31 @@ function dirModifiedMs(dirPath: string): number {
   }
 }
 
-export function pruneStlcRuns(options: TmpCleanupOptions): TmpCleanupResult {
+function pruneRunDirectories(input: {
+  parentDir: string
+  isRunDir: (name: string) => boolean
+  maxRuns: number
+  maxAgeDays: number
+  keepRunIds: string[]
+  preserveDirs?: string[]
+  dryRun: boolean
+  verbose: boolean
+}): { removed: string[]; kept: number; skipped: string[] } {
   const {
-    stlcDir,
-    maxRuns = 15,
-    maxAgeDays = 14,
-    preserveDirs = ['knowledge'],
-    keepRunIds = [],
-    verbose = false,
-    dryRun = false,
-  } = options
+    parentDir,
+    isRunDir,
+    maxRuns,
+    maxAgeDays,
+    keepRunIds,
+    preserveDirs = [],
+    dryRun,
+    verbose,
+  } = input
 
   const removed: string[] = []
   const skipped: string[] = []
 
-  if (!fs.existsSync(stlcDir)) {
+  if (!fs.existsSync(parentDir)) {
     return { removed, kept: 0, skipped }
   }
 
@@ -61,13 +84,13 @@ export function pruneStlcRuns(options: TmpCleanupOptions): TmpCleanupResult {
   const maxAgeMs = maxAgeDays * 24 * 60 * 60 * 1000
   const now = Date.now()
 
-  const entries = fs.readdirSync(stlcDir, { withFileTypes: true })
+  const entries = fs.readdirSync(parentDir, { withFileTypes: true })
   const runDirs = entries
     .filter((entry) => entry.isDirectory() && isRunDir(entry.name) && !preserveDirs.includes(entry.name))
     .map((entry) => ({
       name: entry.name,
-      path: path.join(stlcDir, entry.name),
-      mtime: dirModifiedMs(path.join(stlcDir, entry.name)),
+      path: path.join(parentDir, entry.name),
+      mtime: dirModifiedMs(path.join(parentDir, entry.name)),
     }))
     .sort((a, b) => b.mtime - a.mtime)
 
@@ -81,7 +104,8 @@ export function pruneStlcRuns(options: TmpCleanupOptions): TmpCleanupResult {
   }
 
   const sortedByRecency = [...runDirs]
-  for (let i = maxRuns; i < sortedByRecency.length; i += 1) {
+  const runCap = maxRuns > 0 ? maxRuns : 0
+  for (let i = runCap; i < sortedByRecency.length; i += 1) {
     const run = sortedByRecency[i]!
     if (!keepSet.has(run.name)) toRemove.add(run.name)
   }
@@ -106,6 +130,72 @@ export function pruneStlcRuns(options: TmpCleanupOptions): TmpCleanupResult {
     removed,
     kept: runDirs.length - removed.length,
     skipped,
+  }
+}
+
+export function pruneStlcRuns(options: TmpCleanupOptions): TmpCleanupResult {
+  const {
+    stlcDir,
+    maxRuns = 15,
+    maxAgeDays = 14,
+    preserveDirs = ['knowledge', 'exploration'],
+    keepRunIds = [],
+    verbose = false,
+    dryRun = false,
+  } = options
+
+  const stlc = pruneRunDirectories({
+    parentDir: stlcDir,
+    isRunDir: isStlcRunDir,
+    maxRuns,
+    maxAgeDays,
+    keepRunIds,
+    preserveDirs,
+    dryRun,
+    verbose,
+  })
+
+  return {
+    removed: stlc.removed,
+    kept: stlc.kept,
+    skipped: stlc.skipped,
+    explorationRemoved: [],
+    explorationKept: 0,
+  }
+}
+
+/**
+ * Prunes bug-hunter exploration runs under tmp/stlc/exploration/ (folders
+ * named explore-<timestamp>). Screenshots are the main disk cost here, so
+ * these runs use the same retention window as STLC UUID runs by default.
+ */
+export function pruneExplorationRuns(options: TmpCleanupOptions): Pick<TmpCleanupResult, 'explorationRemoved' | 'explorationKept' | 'skipped'> {
+  const {
+    stlcDir,
+    explorationDir,
+    maxRuns = 15,
+    maxExplorationRuns,
+    maxAgeDays = 14,
+    keepExplorationRunIds = [],
+    verbose = false,
+    dryRun = false,
+  } = options
+
+  const parentDir = explorationDir ?? path.join(stlcDir, 'exploration')
+  const exploration = pruneRunDirectories({
+    parentDir,
+    isRunDir: isExplorationRunDir,
+    maxRuns: maxExplorationRuns ?? maxRuns,
+    maxAgeDays,
+    keepRunIds: keepExplorationRunIds,
+    dryRun,
+    verbose,
+  })
+
+  return {
+    explorationRemoved: exploration.removed,
+    explorationKept: exploration.kept,
+    skipped: exploration.skipped,
   }
 }
 
@@ -139,17 +229,31 @@ export function pruneAutomationTmp(
   options: Partial<TmpCleanupOptions> = {},
 ): TmpCleanupResult & { codegenRemoved: string[] } {
   const stlcDir = options.stlcDir ?? path.join(automationRoot, 'tmp', 'stlc')
-  const stlc = pruneStlcRuns({
+  const shared: TmpCleanupOptions = {
     stlcDir,
     maxRuns: options.maxRuns ?? 15,
     maxAgeDays: options.maxAgeDays ?? 14,
-    preserveDirs: options.preserveDirs ?? ['knowledge'],
+    preserveDirs: options.preserveDirs ?? ['knowledge', 'exploration'],
     keepRunIds: options.keepRunIds ?? [],
+    keepExplorationRunIds: options.keepExplorationRunIds ?? [],
     verbose: options.verbose ?? false,
     dryRun: options.dryRun ?? false,
-  })
-  const codegenRemoved = cleanCodegenScratch(automationRoot, options.maxAgeDays ?? 14)
-  return { ...stlc, codegenRemoved }
+    ...(options.maxExplorationRuns !== undefined ? { maxExplorationRuns: options.maxExplorationRuns } : {}),
+    ...(options.explorationDir ? { explorationDir: options.explorationDir } : {}),
+  }
+
+  const stlc = pruneStlcRuns(shared)
+  const exploration = pruneExplorationRuns(shared)
+  const codegenRemoved = cleanCodegenScratch(automationRoot, shared.maxAgeDays ?? 14)
+
+  return {
+    removed: stlc.removed,
+    kept: stlc.kept,
+    skipped: [...stlc.skipped, ...exploration.skipped],
+    explorationRemoved: exploration.explorationRemoved,
+    explorationKept: exploration.explorationKept,
+    codegenRemoved,
+  }
 }
 
 export function formatBytes(bytes: number): string {

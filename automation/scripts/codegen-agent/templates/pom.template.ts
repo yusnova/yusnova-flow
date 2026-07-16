@@ -9,7 +9,7 @@ export class {{pageName}} extends BasePage {
   constructor(page: Page) {
     super(page)
 {{#each locators}}
-    this.{{propertyName}} = page.locator('{{{selector}}}')
+    this.{{propertyName}} = page.locator({{{selectorExpr}}})
 {{/each}}
   }
 

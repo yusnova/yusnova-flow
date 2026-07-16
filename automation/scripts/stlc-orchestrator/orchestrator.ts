@@ -179,11 +179,25 @@ export class StlcOrchestrator {
         ? state.humanGates.map((gate) => `- ${gate.phase}: ${gate.status} — ${gate.reason}`)
         : ['- None']),
       '',
+      '## Flaky tests',
+      ...(state.flakyTests && state.flakyTests.filter((t) => t.recommendation !== 'stable').length > 0
+        ? state.flakyTests
+          .filter((entry) => entry.recommendation !== 'stable')
+          .map(
+            (entry) => `- ${entry.caseId}: score ${entry.flakyScore} over ${entry.sampleSize} run(s) — ${entry.recommendation} (recent: ${entry.lastStatuses.join(', ')})`,
+          )
+        : ['- None']),
+      '',
       '## Healing proposals',
       ...(state.healingProposals && state.healingProposals.length > 0
-        ? state.healingProposals.map(
+        ? [
+          ...state.healingProposals.map(
             (proposal) => `- ${proposal.id}: ${proposal.status} — ${proposal.oldSelector} → ${proposal.proposedSelector}`,
-          )
+          ),
+          ...(state.healingProposals.some((p) => p.status === 'pending_human')
+            ? ['', `> Review before applying: \`npm run healing:review -- --run ${state.runId}\``]
+            : []),
+        ]
         : ['- None']),
       '',
       '## Audit trail (last 10)',

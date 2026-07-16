@@ -1,16 +1,14 @@
 import { spawnSync } from 'node:child_process'
 import * as path from 'node:path'
 import { createLlmClient } from '../llm/llm-client'
-import {
-  applyAutoHeals,
-  buildAutoHealProposals,
-} from '../healing/auto-healer'
+import { buildAutoHealProposals } from '../healing/auto-healer'
 import {
   isLocatorFailure,
   proposeSelectorHeal,
   proposeSelectorHealWithLlm,
 } from '../healing/selector-healer'
 import { DefectKnowledgeBase } from '../rag/defect-knowledge'
+import { FLAKY_QUARANTINE_THRESHOLD, TestHistoryTracker } from '../flaky/test-history'
 import { appendAudit } from '../state/pipeline-state'
 import {
   AgentResult,
@@ -54,6 +52,11 @@ async function buildHealingProposals(
   if (!isLocatorFailure(failureLog)) return []
 
   const automationRoot = path.resolve(__dirname, '..', '..', '..')
+
+  // SAFETY: this agent only ever *proposes* healing candidates. Nothing here
+  // is allowed to write to POM/spec files. Proposals are always created with
+  // status "pending_human" and must be reviewed via
+  // `npm run healing:review -- --run <runId>` before anything is applied.
   const autoProposals = buildAutoHealProposals(
     failureLog,
     automationRoot,
@@ -62,11 +65,7 @@ async function buildHealingProposals(
   )
 
   if (autoProposals.length > 0) {
-    const applied = applyAutoHeals(autoProposals, automationRoot)
-    const pending = autoProposals.filter(
-      (proposal) => !applied.some((entry) => entry.id === proposal.id),
-    )
-    return [...applied, ...pending]
+    return autoProposals
   }
 
   const pomFile = state.codegenArtifacts?.pomPath ?? `pages/${options.codegen.domain}-page.ts`
@@ -114,6 +113,16 @@ async function buildHealingProposals(
   return [proposal]
 }
 
+function shouldUsePublicUiProject(url: string): boolean {
+  if (process.env.STLC_USE_AUTH_SETUP === 'true') return false
+  try {
+    const host = new URL(url).hostname
+    return !host.endsWith('example.com')
+  } catch {
+    return false
+  }
+}
+
 export async function runExecutionAgent(
   state: StlcSharedState,
   options: OrchestratorOptions,
@@ -133,9 +142,10 @@ export async function runExecutionAgent(
   }
 
   const automationRoot = path.resolve(__dirname, '..', '..', '..')
+  const uiProject = shouldUsePublicUiProject(options.codegen.url) ? 'ui-public' : 'ui'
   const result = spawnSync(
     'npx',
-    ['playwright', 'test', '--project=ui', `suites/${options.codegen.domain}`],
+    ['playwright', 'test', `--project=${uiProject}`, `suites/${options.codegen.domain}`],
     {
       cwd: automationRoot,
       encoding: 'utf-8',
@@ -144,8 +154,17 @@ export async function runExecutionAgent(
   )
 
   const failureLog = `${result.stdout ?? ''}\n${result.stderr ?? ''}`
-  const executionResults = parsePlaywrightOutput(result.stdout ?? '', result.stderr ?? '')
-  const hasFailures = result.status !== 0 || executionResults.some((entry) => entry.status === 'failed')
+  const rawResults = parsePlaywrightOutput(result.stdout ?? '', result.stderr ?? '')
+  const hasFailures = result.status !== 0 || rawResults.some((entry) => entry.status === 'failed')
+
+  const historyTracker = new TestHistoryTracker()
+  const flakySummaries = historyTracker.record(options.codegen.domain, state.runId, rawResults)
+  const flakyByCase = new Map(flakySummaries.map((summary) => [summary.caseId, summary]))
+  const executionResults = rawResults.map((entry) => ({
+    ...entry,
+    flakyScore: flakyByCase.get(entry.caseId)?.flakyScore ?? entry.flakyScore,
+  }))
+  const domainFlakySummary = historyTracker.summary(options.codegen.domain)
 
   const healingProposals = hasFailures
     ? await buildHealingProposals(failureLog, state, options)
@@ -162,12 +181,15 @@ export async function runExecutionAgent(
     })
   }
 
-  const appliedCount = healingProposals.filter((proposal) => proposal.status === 'applied').length
+  const quarantineCandidates = domainFlakySummary.filter(
+    (entry) => entry.flakyScore >= FLAKY_QUARANTINE_THRESHOLD,
+  )
 
   const next = appendAudit(
     {
       ...state,
       executionResults,
+      flakyTests: domainFlakySummary,
       healingProposals: [...(state.healingProposals ?? []), ...healingProposals],
       humanGates,
       currentPhase: hasFailures ? 'triage' : 'reporting',
@@ -176,12 +198,20 @@ export async function runExecutionAgent(
       phase: 'execution',
       agent: 'execution-agent',
       action: 'ran_playwright',
-      reason: hasFailures
-        ? appliedCount > 0
-          ? `Execution failed; auto-healed ${appliedCount} generated test(s), ${pendingReview.length} proposal(s) pending review`
-          : `Execution failed; ${healingProposals.length} healing proposal(s) queued for human review`
-        : 'Execution passed',
+      reason: [
+        hasFailures
+          ? healingProposals.length > 0
+            ? `Execution failed; ${healingProposals.length} healing proposal(s) queued for human review (npm run healing:review -- --run ${state.runId})`
+            : 'Execution failed; no healing proposal could be derived — manual investigation required'
+          : 'Execution passed',
+        quarantineCandidates.length > 0
+          ? `${quarantineCandidates.length} test(s) flagged as flaky quarantine candidate(s) (score >= ${FLAKY_QUARANTINE_THRESHOLD})`
+          : null,
+      ].filter(Boolean).join('; '),
       confidence: result.status === 0 ? 0.95 : 0.6,
+      ...(quarantineCandidates.length > 0
+        ? { inputs: { quarantineCandidates: quarantineCandidates.map((c) => c.caseId) } }
+        : {}),
     },
   )
 
@@ -192,17 +222,27 @@ export async function runTriageAgent(
   state: StlcSharedState,
   options: OrchestratorOptions,
 ): Promise<AgentResult> {
+  const historyTracker = new TestHistoryTracker()
   const failures = state.executionResults.filter((entry) => entry.status === 'failed')
-  const defects: DefectRecord[] = failures.map((failure, index) => ({
-    id: `DEF-${String(index + 1).padStart(3, '0')}`,
-    title: failure.caseId,
-    severity: failure.caseId.toLowerCase().includes('login') ? 'critical' : 'major',
-    dedupHash: failure.caseId.toLowerCase().replace(/\s+/g, '-'),
-    triageStatus: 'open',
-    rootCauseHypothesis: 'Inspect latest commit diff and failure stack trace correlation',
-    linkedCaseIds: [failure.caseId],
-    confidence: 0.6,
-  }))
+  const defects: DefectRecord[] = failures.map((failure, index) => {
+    const knownFlaky = historyTracker.isKnownFlaky(options.codegen.domain, failure.caseId)
+    return {
+      id: `DEF-${String(index + 1).padStart(3, '0')}`,
+      title: failure.caseId,
+      severity: knownFlaky
+        ? 'minor'
+        : failure.caseId.toLowerCase().includes('login')
+          ? 'critical'
+          : 'major',
+      dedupHash: failure.caseId.toLowerCase().replace(/\s+/g, '-'),
+      triageStatus: 'open',
+      rootCauseHypothesis: knownFlaky
+        ? `Likely flaky test (historical flaky score >= ${FLAKY_QUARANTINE_THRESHOLD}) — consider quarantine, see npm run flaky:report`
+        : 'Inspect latest commit diff and failure stack trace correlation',
+      linkedCaseIds: [failure.caseId],
+      confidence: knownFlaky ? 0.5 : 0.6,
+    }
+  })
 
   const deduped = new Map<string, DefectRecord>()
   for (const defect of defects) {

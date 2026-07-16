@@ -102,6 +102,15 @@ export interface QualityGate {
   confidence: number
 }
 
+export interface FlakyTestSummary {
+  caseId: string
+  domain: string
+  flakyScore: number
+  sampleSize: number
+  lastStatuses: Array<ExecutionResult['status']>
+  recommendation: 'stable' | 'monitor' | 'quarantine_candidate'
+}
+
 export interface HealingProposal {
   id: string
   pomFile: string
@@ -136,6 +145,7 @@ export interface StlcSharedState {
   auditTrail: AuditEntry[]
   ragMatches?: Array<{ patternId: string; score: number; symptom: string }>
   healingProposals?: HealingProposal[]
+  flakyTests?: FlakyTestSummary[]
   codegen?: GeneratorOptions
   codegenArtifacts?: {
     pomPath: string

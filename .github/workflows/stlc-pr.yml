@@ -1,0 +1,192 @@
+name: STLC PR Pipeline
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+
+concurrency:
+  group: stlc-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  impact-analysis:
+    name: Test impact analysis
+    runs-on: ubuntu-latest
+    outputs:
+      affected_domains_json: ${{ steps.impact.outputs.affected_domains_json }}
+      run_full_suite: ${{ steps.impact.outputs.run_full_suite }}
+      has_impact: ${{ steps.impact.outputs.has_impact }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: automation/package-lock.json
+
+      - name: Install dependencies
+        working-directory: automation
+        run: npm ci
+
+      - name: Analyze test impact
+        id: impact
+        working-directory: automation
+        run: |
+          git fetch origin ${{ github.event.pull_request.base.ref }} --depth=1
+          npx ts-node scripts/shared/test-impact-cli.ts \
+            --base origin/${{ github.event.pull_request.base.ref }} \
+            --head HEAD \
+            --format github
+
+      - name: Print impact summary
+        working-directory: automation
+        run: |
+          git fetch origin ${{ github.event.pull_request.base.ref }} --depth=1
+          npx ts-node scripts/shared/test-impact-cli.ts \
+            --base origin/${{ github.event.pull_request.base.ref }} \
+            --head HEAD
+
+  validate-and-test:
+    name: Validate + test (${{ matrix.domain }})
+    needs: impact-analysis
+    if: needs.impact-analysis.outputs.has_impact == 'true' || needs.impact-analysis.outputs.run_full_suite == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        domain: ${{ fromJson(needs.impact-analysis.outputs.affected_domains_json) }}
+    outputs:
+      decision: ${{ steps.summary.outputs.decision }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: automation/package-lock.json
+
+      - name: Install dependencies
+        working-directory: automation
+        run: npm ci
+
+      - name: Install Playwright browsers
+        working-directory: automation
+        run: npx playwright install --with-deps chromium
+
+      - name: Run convention validator
+        id: validate
+        working-directory: automation
+        continue-on-error: true
+        run: npm run validate -- --domain ${{ matrix.domain }} 2>&1 | tee validator-${{ matrix.domain }}.log
+
+      - name: Run Playwright suite
+        id: playwright
+        working-directory: automation
+        continue-on-error: true
+        env:
+          ENV: demo
+          REGULAR_USER_USERNAME: ${{ secrets.REGULAR_USER_USERNAME }}
+          REGULAR_USER_PASSWORD: ${{ secrets.REGULAR_USER_PASSWORD }}
+          ADMIN_USER_USERNAME: ${{ secrets.ADMIN_USER_USERNAME }}
+          ADMIN_USER_PASSWORD: ${{ secrets.ADMIN_USER_PASSWORD }}
+        run: |
+          npx playwright test --project=ui "suites/${{ matrix.domain }}" 2>&1 | tee playwright-${{ matrix.domain }}.log
+
+      - name: Build self-healing proposals on failure
+        if: steps.playwright.outcome == 'failure'
+        working-directory: automation
+        run: |
+          npx ts-node scripts/stlc-orchestrator/healing/ci-heal-cli.ts \
+            --domain ${{ matrix.domain }} \
+            --log-file playwright-${{ matrix.domain }}.log || true
+
+      - name: Domain summary
+        id: summary
+        working-directory: automation
+        run: |
+          if [ "${{ steps.validate.outcome }}" = "failure" ] || [ "${{ steps.playwright.outcome }}" = "failure" ]; then
+            echo "decision=no_go" >> "$GITHUB_OUTPUT"
+          else
+            echo "decision=go" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stlc-pr-${{ matrix.domain }}
+          path: |
+            automation/validator-${{ matrix.domain }}.log
+            automation/playwright-${{ matrix.domain }}.log
+            automation/reports/html
+            automation/tmp/stlc/ci-nightly-*
+          retention-days: 14
+          if-no-files-found: ignore
+
+  comment:
+    name: Post PR summary
+    needs: [impact-analysis, validate-and-test]
+    if: always() && needs.impact-analysis.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Post summary comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const runFullSuite = '${{ needs.impact-analysis.outputs.run_full_suite }}' === 'true'
+            const affectedDomains = JSON.parse('${{ needs.impact-analysis.outputs.affected_domains_json }}' || '[]')
+            const testResult = '${{ needs.validate-and-test.result }}'
+
+            const decisionEmoji = testResult === 'success' ? '✅' : testResult === 'skipped' ? '⚪' : '❌'
+            const scopeLine = affectedDomains.length > 0
+              ? `\`${affectedDomains.join('`, `')}\`${runFullSuite ? ' (full suite — shared code changed)' : ''}`
+              : '_no test-relevant changes detected_'
+
+            const body = [
+              '### 🤖 STLC PR Pipeline',
+              '',
+              `${decisionEmoji} **Result:** ${testResult}`,
+              `**Affected domain(s):** ${scopeLine}`,
+              '',
+              testResult === 'failure'
+                ? '⚠️ Validator or Playwright checks failed for one or more domains. See the **Checks** tab for logs, and download the `stlc-pr-*` artifacts for the HTML report.'
+                : testResult === 'skipped'
+                  ? 'No domain-level tests were triggered for this change.'
+                  : 'All affected domain checks passed.',
+              '',
+              '> Self-healing proposals (if any) are queued for human review — run `npm run healing:review -- --list-runs` locally after downloading the `tmp/stlc` artifact, or see the workflow artifacts.',
+            ].join('\n')
+
+            const marker = '<!-- stlc-pr-bot -->'
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            })
+            const existing = comments.find((c) => c.body?.includes(marker))
+            const fullBody = `${marker}\n${body}`
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body: fullBody,
+              })
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: fullBody,
+              })
+            }

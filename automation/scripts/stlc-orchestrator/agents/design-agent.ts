@@ -1,5 +1,6 @@
 import { createLlmClient, parseJsonResponse } from '../llm/llm-client'
 import { findingsMissingFromRequirements } from '../../shared/codebase-scanner'
+import { isFindingRelevantToDomain } from '../requirement-synthesizer'
 import { appendAudit } from '../state/pipeline-state'
 import { AgentResult, DesignedTestCase, OrchestratorOptions, StlcSharedState, TestLevel } from '../types'
 
@@ -8,6 +9,13 @@ function levelForCase(title: string, scopeLevel: TestLevel): TestLevel {
   if (scopeLevel === 'api') return 'api'
   if (lower.includes('api') || lower.includes('status') || lower.includes('token')) return 'api'
   return 'ui'
+}
+
+function shouldAddNegativeVariants(acText: string): boolean {
+  const lower = acText.toLowerCase()
+  if (/submit|form|login|register|password|required field|invalid/.test(lower)) return true
+  if (/navigate|view|open|display|return to|listing|language|blog article/.test(lower)) return false
+  return false
 }
 
 function negativeVariants(baseTitle: string): DesignedTestCase[] {
@@ -129,7 +137,7 @@ export async function runDesignAgent(
       }
       designed.push(happy)
 
-      if (happy.priority === 'P0' || happy.priority === 'P1') {
+      if ((happy.priority === 'P0' || happy.priority === 'P1') && shouldAddNegativeVariants(ac.text)) {
         const negatives = negativeVariants(happy.title).map((entry, index) => ({
           ...entry,
           id: `${baseId}-N${index + 1}`,
@@ -147,6 +155,8 @@ export async function runDesignAgent(
       state.codebaseInsights.findings,
       state.requirementText,
       designed.map((testCase) => testCase.title),
+    ).filter((finding) =>
+      isFindingRelevantToDomain(finding, options.codegen.domain, state.requirementText),
     )
     let codeIdx = designed.length
     for (const finding of gaps.slice(0, 8)) {

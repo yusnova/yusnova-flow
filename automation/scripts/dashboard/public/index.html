@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>STLC Quality Dashboard</title>
+<link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-dot"></span>
+      <h1>STLC Quality Dashboard</h1>
+    </div>
+    <nav class="tabs" id="tabs">
+      <button class="tab active" data-tab="runs">Runs</button>
+      <button class="tab" data-tab="healing">Self-Healing</button>
+      <button class="tab" data-tab="flaky">Flaky Tests</button>
+      <button class="tab" data-tab="impact">Test Impact</button>
+    </nav>
+    <button id="refresh" class="refresh-btn" title="Refresh data">⟳ Refresh</button>
+  </header>
+
+  <main id="app">
+    <section id="view-runs" class="view active">
+      <div class="panel-header">
+        <h2>Pipeline runs</h2>
+        <span class="hint">Most recently updated first</span>
+      </div>
+      <div id="runs-table" class="card"><p class="empty">Loading…</p></div>
+      <div id="run-detail" class="card detail hidden"></div>
+    </section>
+
+    <section id="view-healing" class="view">
+      <div class="panel-header">
+        <h2>Self-healing proposals</h2>
+        <div class="filter-row">
+          <label>Status
+            <select id="healing-status">
+              <option value="pending_human" selected>Pending review</option>
+              <option value="approved">Approved</option>
+              <option value="applied">Applied</option>
+              <option value="rejected">Rejected</option>
+              <option value="all">All</option>
+            </select>
+          </label>
+        </div>
+      </div>
+      <p class="hint safety-note">
+        🔒 Nothing is written to a POM/spec file until you click <strong>Approve</strong> below. This mirrors
+        <code>npm run healing:review</code> — every decision is recorded in the run's audit trail.
+      </p>
+      <div id="healing-list" class="card"><p class="empty">Loading…</p></div>
+    </section>
+
+    <section id="view-flaky" class="view">
+      <div class="panel-header">
+        <h2>Flaky test intelligence</h2>
+        <div class="filter-row">
+          <label>Domain
+            <select id="flaky-domain"><option value="">All domains</option></select>
+          </label>
+          <label>Min score
+            <input id="flaky-min-score" type="number" min="0" max="1" step="0.05" value="0.3" />
+          </label>
+        </div>
+      </div>
+      <div id="flaky-table" class="card"><p class="empty">Loading…</p></div>
+    </section>
+
+    <section id="view-impact" class="view">
+      <div class="panel-header">
+        <h2>Test impact analysis</h2>
+        <span class="hint">Paste changed file paths (one per line) to see which domains would run in CI</span>
+      </div>
+      <div class="card">
+        <textarea id="impact-files" rows="6" placeholder="automation/domains/example/example.fixture.ts
+automation/pages/example-page.ts"></textarea>
+        <button id="impact-run" class="primary-btn">Analyze impact</button>
+        <div id="impact-result" class="impact-result"></div>
+      </div>
+    </section>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>

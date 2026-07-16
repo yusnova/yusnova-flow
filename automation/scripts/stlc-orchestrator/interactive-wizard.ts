@@ -2,20 +2,14 @@ import * as fs from 'node:fs'
 import * as path from 'node:path'
 import * as readline from 'node:readline/promises'
 import { stdin as input, stdout as output } from 'node:process'
-import { normalizeDomainName, validateDomainInput } from '../codegen-agent/domain-name'
-import { normalizePageName, validatePageNameInput } from '../codegen-agent/page-name'
+import { normalizeDomainName, validateDomainInput } from '@codegen-agent/naming/domain-name'
+import { normalizePageName, validatePageNameInput } from '@codegen-agent/naming/page-name'
 import { GeneratorOptions } from '../codegen-agent/types'
 import { PR_PHASES } from './profiles'
 import { OrchestratorOptions, StlcPhase } from './types'
 import { style } from './terminal'
 
 const TOTAL_STEPS = 6
-
-const DEFAULT_REQUIREMENT = [
-  'AC: User can view the product list',
-  'AC: User must be able to add items to cart',
-  'AC: User can sort products by price',
-].join('\n')
 
 export interface ResolvedStlcRun {
   requirementText: string
@@ -40,7 +34,7 @@ export async function runInteractiveWizard(
 
     const domainInput = await askRequired(rl, 2, 'Domain name', {
       hint: 'Feature folder under suites/ and domains/. kebab-case, snake_case or PascalCase are all fine.',
-      example: 'inventory-page, inventory_page, inventory',
+      example: 'example-page, example_page, example',
       validate: validateDomainInput,
     })
     const domain = normalizeDomainName(domainInput)
@@ -50,7 +44,7 @@ export async function runInteractiveWizard(
 
     const pageInput = await askRequired(rl, 3, 'Page class name', {
       hint: 'Name for the generated Page Object class.',
-      example: 'inventory-page, InventoryPage',
+      example: 'example-page, ExamplePage',
       validate: validatePageNameInput,
     })
     const page = normalizePageName(pageInput)
@@ -59,8 +53,8 @@ export async function runInteractiveWizard(
     }
 
     const requirementFile = await askOptionalPath(rl, 4, 'Requirement file', {
-      hint: 'Markdown or text with acceptance criteria. Leave empty for built-in demo AC lines.',
-      example: './requirements/inventory.md',
+      hint: 'Markdown or text with acceptance criteria. Leave empty to auto-generate AC from the live page + frontend/backend scan.',
+      example: './requirements/example.md',
     })
 
     const runTests = await askYesNo(rl, 5, 'Run Playwright tests after generation?', {
@@ -68,7 +62,7 @@ export async function runInteractiveWizard(
       defaultYes: false,
     })
 
-    const { explore, overwrite, headless } = await askCodegenOptions(rl, 6)
+    const { overwrite, headless } = await askCodegenOptions(rl, 6)
 
     const llmAvailable = Boolean(process.env.STLC_LLM_API_KEY?.trim())
     const useLlm = llmAvailable && process.env.STLC_USE_LLM === 'true'
@@ -80,14 +74,14 @@ export async function runInteractiveWizard(
 
     const requirementText = requirementFile
       ? fs.readFileSync(path.resolve(automationRoot, requirementFile), 'utf-8')
-      : DEFAULT_REQUIREMENT
+      : ''
 
     const codegen: GeneratorOptions = {
       url,
       domain,
       page,
       type: 'ui',
-      explore,
+      explore: true,
       overwrite,
       headless,
       noCodegen: false,
@@ -129,19 +123,14 @@ ${style.dim('Requirements → design → codegen → review → report. Codegen 
 async function askCodegenOptions(
   rl: readline.Interface,
   step: number,
-): Promise<{ explore: boolean; overwrite: boolean; headless: boolean }> {
+): Promise<{ overwrite: boolean; headless: boolean }> {
   console.log(`\n${style.cyan(`━━ Step ${step}/${TOTAL_STEPS} ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`)}`)
   console.log(style.bold('Codegen options'))
   console.log(style.dim('Controls DOM analysis and spec generation (shared with codegen:agent).'))
-
-  const explore = await askYesNo(rl, 'Click through page elements (explore)?', {
-    hint: 'Auto-clicks buttons, links and dropdowns; merges the recorded flow into the spec.',
-    defaultYes: true,
-    subQuestion: true,
-  })
+  console.log(`${style.dim('Explore:')} ${style.green('on')} ${style.dim('(click-through + modal scan — automatic)')}`)
 
   const overwrite = await askYesNo(rl, 'Overwrite existing POM and spec files?', {
-    hint: 'Replace pages/, domains/, and suites/ files if they already exist.',
+    hint: 'Regenerates pages/ + domains/ fixture for this domain. Spec: only @stlc:generated tests are replaced; your hand-written tests (no generated marker) are kept. No = abort if files exist.',
     defaultYes: false,
     subQuestion: true,
   })
@@ -152,7 +141,7 @@ async function askCodegenOptions(
     subQuestion: true,
   })
 
-  return { explore, overwrite, headless: !showBrowser }
+  return { overwrite, headless: !showBrowser }
 }
 
 async function confirmSummary(
@@ -168,8 +157,8 @@ ${style.bold('━━ Summary ━━━━━━━━━━━━━━━━━
   Domain      : ${opts.codegen.domain}
   Page        : ${opts.codegen.page}
   Pipeline    : ${pipelineLabel}
-  Requirement : ${requirementFile ?? '(built-in demo AC lines)'}
-  Explore     : ${opts.codegen.explore ? 'yes' : 'no'}
+  Requirement : ${requirementFile ?? '(auto from page + codebase)'}
+  Explore     : yes (always on)
   Overwrite   : ${opts.codegen.overwrite ? 'yes' : 'no'}
   Browser     : ${opts.codegen.headless ? 'hidden' : 'visible'}
   LLM         : ${opts.enableLlm ? 'yes' : 'no (heuristics)'}
@@ -236,7 +225,7 @@ async function askOptionalPath(
 
   const resolved = path.resolve(answer)
   if (!fs.existsSync(resolved)) {
-    console.log(style.yellow(`  File not found: ${answer} — using built-in demo AC lines instead.`))
+    console.log(style.yellow(`  File not found: ${answer} — AC will be auto-generated from page + codebase.`))
     return undefined
   }
 
