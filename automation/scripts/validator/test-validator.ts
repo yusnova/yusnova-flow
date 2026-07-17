@@ -43,8 +43,8 @@ const TEST_TITLE_PATTERN = /^\[[A-Za-z0-9]+\]\s+\|\s+verify that\s+.+$/
 async function main(): Promise<void> {
   const program = new Command()
   program
-    .name('test-validator')
-    .description('Validate automation framework conventions')
+    .name('validate:conventions')
+    .description('Check POM + spec conventions (banned selectors, fixture imports, title format)')
     .option('--domain <domain>', 'Limit validation to one domain')
     .option('--browser', 'Open browser to verify selectors', false)
     .option('--base-url <url>', 'Base URL for browser selector checks')

@@ -1,5 +1,6 @@
 import { GeneratorOptions } from '../codegen-agent/types'
 import { CodebaseInsights } from '../shared/codebase-scanner'
+import { AppScanResult } from '../shared/app-scanner'
 
 export type StlcPhase =
   | 'requirements'
@@ -138,6 +139,7 @@ export interface StlcSharedState {
   testScope: TestScope
   testCases: DesignedTestCase[]
   codebaseInsights?: CodebaseInsights
+  appInsights?: AppScanResult
   executionResults: ExecutionResult[]
   defects: DefectRecord[]
   humanGates: HumanGate[]

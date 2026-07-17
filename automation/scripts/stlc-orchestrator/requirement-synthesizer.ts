@@ -2,6 +2,9 @@ import * as path from 'node:path'
 import { PageAnalyser } from '@codegen-agent/dom/page-analyser'
 import { ElementInfo, ElementMap } from '../codegen-agent/types'
 import { CodebaseFinding, CodebaseInsights, scanCodebase } from '../shared/codebase-scanner'
+import { resolveAppUnderTestRoot, scanAppUnderTest } from '../shared/app-scanner'
+import { criteriaFromAppSelectors } from './design/heuristic-enrichment'
+import { parseAcceptanceCriteria } from './requirements/ac-parser'
 
 export const DEMO_REQUIREMENT_SNIPPETS = [
   'user can view the product list',
@@ -14,11 +17,12 @@ export interface SynthesizeRequirementsOptions {
   domain: string
   headless?: boolean
   repoRoot: string
+  appRoot?: string
 }
 
 export interface SynthesizedRequirements {
   text: string
-  sources: Array<'page' | 'url' | 'codebase'>
+  sources: Array<'page' | 'url' | 'codebase' | 'app'>
   acceptanceCriteria: string[]
 }
 
@@ -30,6 +34,18 @@ export function shouldAutoSynthesizeRequirements(
   const trimmed = requirementText.trim()
   if (trimmed.length === 0) return true
   return isDemoRequirementText(trimmed)
+}
+
+/**
+ * Enrich even when the caller passed some prose — if structured ACs are thin,
+ * merge live page + codebase + app-scan criteria so no-LLM design still has meat.
+ */
+export function shouldEnrichRequirements(
+  requirementText: string,
+  requirementFile?: string,
+): boolean {
+  if (shouldAutoSynthesizeRequirements(requirementText, requirementFile)) return true
+  return parseAcceptanceCriteria(requirementText).length < 4
 }
 
 export function isDemoRequirementText(text: string): boolean {
@@ -59,16 +75,54 @@ export async function synthesizeRequirements(
     sources.push('codebase')
   }
 
+  const appRoot = opts.appRoot ?? resolveAppUnderTestRoot({
+    domain: opts.domain,
+    searchFrom: [opts.repoRoot, path.resolve(opts.repoRoot, '..'), process.cwd()],
+  })
+  if (appRoot) {
+    const app = scanAppUnderTest(appRoot)
+    if (app.detected) {
+      criteria.push(...criteriaFromAppSelectors(app, opts.domain))
+      sources.push('app')
+    }
+  }
+
   const acceptanceCriteria = dedupeCriteria(criteria)
   const text = acceptanceCriteria.map((line) => (line.startsWith('AC:') ? line : `AC: ${line}`)).join('\n')
 
   return { text, sources, acceptanceCriteria }
 }
 
+/** Merge caller-provided ACs with synthesized ones (caller wins on duplicates). */
+export function mergeRequirementTexts(existing: string, synthesized: SynthesizedRequirements): string {
+  const fromCaller = parseAcceptanceCriteria(existing).map((ac) => ac.text)
+  const merged = dedupeCriteria([...fromCaller, ...synthesized.acceptanceCriteria])
+  return merged.map((line) => (line.startsWith('AC:') ? line : `AC: ${line}`)).join('\n')
+}
+
+function elementBlob(el: ElementInfo): string {
+  return [
+    el.dataTest,
+    el.dataTestId,
+    el.id,
+    el.name,
+    el.placeholder,
+    el.ariaLabel,
+    el.accessibleName,
+    el.textContent,
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase()
+}
+
 function inferCriteriaFromPage(map: ElementMap, domain: string): string[] {
   const criteria: string[] = []
   const pathname = safePathname(map.url)
   const links = collectLinkLabels(map.elements)
+  const blobs = map.elements.map(elementBlob)
+  const has = (re: RegExp) => blobs.some((b) => re.test(b))
+
   const hasInventory = map.elements.some(
     (el) =>
       el.dataTest?.includes('inventory') === true
@@ -87,9 +141,40 @@ function inferCriteriaFromPage(map: ElementMap, domain: string): string[] {
   const articleLikeLinks = links.filter((label) => label.length >= 35)
   const isBlogContext = pathname.includes('blog') || articleLikeLinks.length >= 3
 
+  // Multi-step booking / wizard funnel signals (data-testid + labels).
+  const isWizardFunnel =
+    (has(/postcode|postal/) && has(/look\s*up|lookup/))
+    || (has(/waste/) && has(/skip/))
+    || (has(/next-from-step|step-dot|step-indicator/) && has(/confirm|book/))
+
   criteria.push(`User can open the ${humanizeDomain(domain)} page`)
   if (map.pageTitle.trim()) {
     criteria.push(`Page shows the "${map.pageTitle.trim()}" title`)
+  }
+
+  if (isWizardFunnel || has(/booking-flow|step-postcode/)) {
+    if (has(/postcode|postal/)) {
+      criteria.push('User can enter a UK postcode and look up matching addresses')
+    }
+    if (has(/manual-address|empty-address/)) {
+      criteria.push('User can enter an address manually when lookup returns no results')
+    }
+    if (has(/lookup-error|retry-lookup|invalid/)) {
+      criteria.push('User sees a clear validation error for empty or invalid postcode lookup')
+    }
+    if (has(/waste/)) {
+      criteria.push('User can select a waste type before choosing a skip')
+    }
+    if (has(/skip|yard/)) {
+      criteria.push('User can select an available skip size based on waste rules')
+    }
+    if (has(/confirm|review|price/)) {
+      criteria.push('User can review pricing and confirm the booking')
+    }
+    if (has(/booking-success|booking-id|start-again/)) {
+      criteria.push('User sees a booking confirmation with a reference id after success')
+    }
+    criteria.push(`User can complete the ${humanizeDomain(domain)} multi-step funnel end-to-end`)
   }
 
   if (isBlogContext) {
@@ -110,7 +195,7 @@ function inferCriteriaFromPage(map: ElementMap, domain: string): string[] {
     criteria.push('User can reach the contact or quote call-to-action from the page')
   }
 
-  if (hasFormFields && !isBlogContext) {
+  if (hasFormFields && !isBlogContext && !isWizardFunnel) {
     criteria.push('User can complete and submit the main form on the page')
   }
 

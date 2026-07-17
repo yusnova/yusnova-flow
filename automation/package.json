@@ -11,25 +11,17 @@
 
     "codegen:agent": "ts-node scripts/codegen-agent/index.ts",
     "stlc:orchestrator": "ts-node scripts/stlc-orchestrator/index.ts",
-    "validate": "ts-node scripts/validator/test-validator.ts",
-
-    "healing:review": "ts-node scripts/stlc-orchestrator/healing/review-cli.ts",
-    "healing:from-log": "ts-node scripts/stlc-orchestrator/healing/ci-heal-cli.ts",
-    "flaky:report": "ts-node scripts/stlc-orchestrator/flaky/flaky-report-cli.ts",
+    "validate:conventions": "ts-node scripts/validator/test-validator.ts",
     "explore:bugs": "ts-node scripts/explorer-agent/index.ts",
-
     "dashboard": "ts-node scripts/dashboard/server.ts",
-    "mcp:server": "ts-node scripts/mcp-server/server.ts",
 
-    "test:impact": "ts-node scripts/shared/test-impact-cli.ts",
-    "test:unit": "ts-node scripts/run-unit-tests.ts",
     "tmp:clean": "ts-node scripts/tmp-cleanup-cli.ts",
 
     "lint": "eslint . --ext .ts",
     "lint:fix": "eslint . --ext .ts --fix",
     "typecheck": "tsc --noEmit",
 
-    "swagger:api": "npx @openapitools/openapi-generator-cli generate -i ${SWAGGER_PATH} -g typescript-axios -o core/api/generated --skip-validate-spec --additional-properties=withSeparateModelsAndApi=true,apiPackage=api,modelPackage=model,supportsES6=true"
+    "swagger:api": "ts-node scripts/swagger-api-cli.ts"
   },
   "dependencies": {
     "@faker-js/faker": "^9.9.0",

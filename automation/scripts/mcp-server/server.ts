@@ -331,22 +331,23 @@ server.registerTool(
 server.registerTool(
   'stlc_explore_bugs',
   {
-    title: 'Autonomous bug-hunter exploration',
+    title: 'Explore bugs mini-orchestrator',
     description:
-      'Drives a real Playwright browser to crawl a live page/app breadth-first, clicking through buttons and ' +
-      'links, and flags anomalies: console errors, uncaught JS exceptions, failed/4xx/5xx network calls, ' +
-      'visible error text (e.g. "Internal Server Error", stack traces), and broken images — each with a ' +
-      'screenshot and action trail. No test cases or requirements needed; this is exploratory QA that ' +
-      'complements the scripted STLC pipeline. HEAVY tool (drives a real browser) — only call when the user ' +
-      'explicitly asks to explore/crawl/hunt for bugs on a page.',
+      'Runs the explore:bugs mini-orchestrator (setup → crawl → triage → review → reporting → rag): drives a real ' +
+      'Playwright browser to crawl a live page/app, flags anomalies (console/JS/network/error text/broken images), ' +
+      'writes state.json + exploration-report.md under tmp/stlc/exploration/{runId}/. Complements STLC — does not ' +
+      'generate POM/specs. HEAVY tool — only call when the user explicitly asks to explore/crawl/hunt for bugs.',
     inputSchema: {
       url: z.string().describe('Starting URL to explore'),
+      domain: z.string().optional().describe('Domain/module tag for report + RAG (default: explored)'),
       maxPages: z.number().int().positive().optional().describe('Max distinct pages to visit, default 5'),
       maxActionsPerPage: z.number().int().positive().optional().describe('Max buttons/controls to click per page, default 15'),
       headless: z.boolean().optional().describe('Default true'),
       sameOriginOnly: z.boolean().optional().describe('Default true — only follow links on the same origin'),
       storageState: z.string().optional().describe('Path to a Playwright storageState JSON for authenticated exploration'),
       outputDir: z.string().optional(),
+      ingestRag: z.boolean().optional().describe('Ingest open critical/major defects into RAG knowledge base'),
+      skipHumanGates: z.boolean().optional().describe('Default true for MCP — auto-acknowledge critical findings'),
     },
   },
   async (params) => {

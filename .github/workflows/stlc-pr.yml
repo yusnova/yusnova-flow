@@ -86,7 +86,7 @@ jobs:
         id: validate
         working-directory: automation
         continue-on-error: true
-        run: npm run validate -- --domain ${{ matrix.domain }} 2>&1 | tee validator-${{ matrix.domain }}.log
+        run: npm run validate:conventions -- --domain ${{ matrix.domain }} 2>&1 | tee validator-${{ matrix.domain }}.log
 
       - name: Run Playwright suite
         id: playwright

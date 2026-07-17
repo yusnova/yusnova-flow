@@ -15,7 +15,34 @@ export interface FailureContext {
 
 const SPEC_LINE = /(suites\/[^\s:]+\.spec\.ts):(\d+):(\d+)/i
 const SELECTOR_IN_LOG = /\[data-test="([^"]+)"\]|\[data-testid="([^"]+)"\]|locator\('([^']+)'\)|locator\("([^"]+)"\)/i
-const POM_PROPERTY = /inventoryPage\.([A-Za-z0-9_]+)/
+/** Matches any *Page.property (bookingFlowPage.lookupButtonBtn, inventoryPage.addBtn, …). */
+const POM_PROPERTY = /([A-Za-z][A-Za-z0-9_]*)Page\.([A-Za-z0-9_]+)/g
+const POM_ACTION_METHODS = new Set([
+  'click',
+  'fill',
+  'check',
+  'uncheck',
+  'goto',
+  'locator',
+  'hover',
+  'press',
+  'selectOption',
+  'type',
+  'waitFor',
+  'getByRole',
+  'getByTestId',
+  'getByText',
+  'getByLabel',
+])
+
+function extractPomProperty(window: string): string | undefined {
+  const matches = [...window.matchAll(POM_PROPERTY)]
+  if (matches.length === 0) return undefined
+  const locatorLike = [...matches]
+    .reverse()
+    .find((match) => !POM_ACTION_METHODS.has(match[2]!))
+  return (locatorLike ?? matches[matches.length - 1])?.[2]
+}
 
 export function parseFailureContexts(failureLog: string): FailureContext[] {
   const contexts: FailureContext[] = []
@@ -35,43 +62,130 @@ export function parseFailureContexts(failureLog: string): FailureContext[] {
         ? selectorMatch[3] ?? selectorMatch[4] ?? selectorMatch[0]
         : selectorMatch[0]
 
-    const pomMatch = window.match(POM_PROPERTY)
+    const pomProperty = extractPomProperty(window)
     contexts.push({
       specPath: specMatch[1]!,
       specLine: Number(specMatch[2]),
       testTitle: line.split('›').pop()?.trim() ?? 'unknown test',
       brokenSelector,
-      ...(pomMatch ? { pomProperty: pomMatch[1] } : {}),
+      ...(pomProperty ? { pomProperty } : {}),
     })
   }
 
   return contexts
 }
 
+function preferHint(
+  hints: CodebaseSelectorHint[],
+  predicate: (hint: CodebaseSelectorHint) => boolean,
+): CodebaseSelectorHint | undefined {
+  return (
+    hints.find((hint) => hint.source === 'frontend' && predicate(hint)) ??
+    hints.find(predicate)
+  )
+}
+
+/** lookupButtonBtn → ["lookup-button", "lookup"] */
+function pomPropertyTestIdCandidates(property?: string): string[] {
+  if (!property) return []
+  const stripped = property.replace(/(Btn|Button|Input|Radio|Link|Checkbox|Select|Field)$/g, '')
+  const kebab = stripped
+    .replace(/([a-z0-9])([A-Z])/g, '$1-$2')
+    .replace(/_/g, '-')
+    .toLowerCase()
+  const parts = kebab.split('-').filter(Boolean)
+  const candidates: string[] = []
+  if (kebab) candidates.push(kebab)
+  for (let i = parts.length - 1; i >= 1; i -= 1) {
+    candidates.push(parts.slice(0, i).join('-'))
+  }
+  return [...new Set(candidates)]
+}
+
+const SECONDARY_TEST_ID = /(^|-)(error|loading|spinner|retry|disabled|hidden|skeleton)($|-)/i
+
+function scorePartialHint(
+  hint: CodebaseSelectorHint,
+  attrValue: string,
+  propertyCandidates: string[],
+): number {
+  let score = 0
+  if (propertyCandidates.includes(hint.context)) score += 200
+  if (hint.context.startsWith(`${attrValue}-`) || hint.context.startsWith(attrValue)) score += 80
+  else if (hint.context.includes(attrValue)) score += 30
+  if (hint.source === 'frontend') score += 20
+  if (SECONDARY_TEST_ID.test(hint.context) && !SECONDARY_TEST_ID.test(attrValue)) score -= 100
+  score -= Math.abs(hint.context.length - attrValue.length)
+  return score
+}
+
 function suggestFromCodebase(
   brokenSelector: string,
   hints: CodebaseSelectorHint[],
+  pomProperty?: string,
 ): string | null {
   const dataTest = brokenSelector.match(/\[data-test="([^"]+)"\]/)?.[1]
   const dataTestId = brokenSelector.match(/\[data-testid="([^"]+)"\]/)?.[1]
+  const attrValue = dataTest ?? dataTestId
+  const propertyCandidates = pomPropertyTestIdCandidates(pomProperty)
 
-  if (dataTest) {
-    const exact = hints.find((hint) => hint.context === dataTest)
+  if (attrValue) {
+    for (const candidate of propertyCandidates) {
+      const fromProperty = preferHint(hints, (hint) => hint.context === candidate)
+      if (fromProperty && fromProperty.selector !== brokenSelector) return fromProperty.selector
+    }
+
+    const exact = preferHint(hints, (hint) => hint.context === attrValue)
     if (exact) return exact.selector
 
-    const partial = hints.find(
-      (hint) => hint.context.includes(dataTest) || dataTest.includes(hint.context),
-    )
+    // Prefer primary UI ids: "lookup" + lookupButtonBtn → "lookup-button", not "lookup-error".
+    const partials = hints
+      .filter(
+        (hint) =>
+          hint.context.startsWith(attrValue) ||
+          hint.context.includes(attrValue) ||
+          (attrValue.length >= 4 && attrValue.includes(hint.context)),
+      )
+      .sort(
+        (a, b) =>
+          scorePartialHint(b, attrValue, propertyCandidates) -
+          scorePartialHint(a, attrValue, propertyCandidates),
+      )
+    const partial = partials[0]
     if (partial) return partial.selector
+
+    return null
   }
 
-  if (dataTestId) {
-    const match = hints.find((hint) => hint.context === dataTestId)
-    if (match) return match.selector
+  for (const candidate of propertyCandidates) {
+    const fromProperty = preferHint(hints, (hint) => hint.context === candidate)
+    if (fromProperty) return fromProperty.selector
   }
 
-  const frontendHint = hints.find((hint) => hint.source === 'frontend' && hint.strategy === 'data-test')
+  const frontendHint = preferHint(
+    hints,
+    (hint) => hint.strategy === 'data-testid' || hint.strategy === 'data-test',
+  )
   return frontendHint?.selector ?? null
+}
+
+/** POM sources often escape quotes: [data-testid=\"lookup\"]. */
+function selectorForms(selector: string): string[] {
+  const escapedQuotes = selector.replaceAll('"', '\\"')
+  return [...new Set([selector, escapedQuotes])]
+}
+
+function contentIncludesSelector(content: string, selector: string): boolean {
+  return selectorForms(selector).some((form) => content.includes(form))
+}
+
+function replaceSelectorInContent(content: string, from: string, to: string): string {
+  let next = content
+  for (const form of selectorForms(from)) {
+    const replacement = form.includes('\\"') ? to.replaceAll('"', '\\"') : to
+    next = next.replaceAll(form, replacement)
+  }
+  return next
 }
 
 export function buildAutoHealProposals(
@@ -98,7 +212,11 @@ export function buildAutoHealProposals(
       if (!window.some((entry) => entry.includes(STLC_GENERATED_MARKER))) continue
     }
 
-    const proposed = suggestFromCodebase(context.brokenSelector, insights.selectors)
+    const proposed = suggestFromCodebase(
+      context.brokenSelector,
+      insights.selectors,
+      context.pomProperty,
+    )
     if (!proposed || proposed === context.brokenSelector) continue
 
     const resolvedPom = pomPath ?? path.join(automationRoot, 'pages', `${domain}-page.ts`)
@@ -162,16 +280,12 @@ export function applyHealingProposals(
     }
 
     let pomContent = fs.readFileSync(proposal.pomFile, 'utf-8')
-    if (!pomContent.includes(proposal.oldSelector)) {
-      const escaped = proposal.oldSelector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-      const loose = new RegExp(escaped)
-      if (!loose.test(pomContent)) {
-        skipped.push({ proposal, reason: 'old selector no longer present in POM file (already changed?)' })
-        continue
-      }
+    if (!contentIncludesSelector(pomContent, proposal.oldSelector)) {
+      skipped.push({ proposal, reason: 'old selector no longer present in POM file (already changed?)' })
+      continue
     }
 
-    pomContent = pomContent.replaceAll(proposal.oldSelector, proposal.proposedSelector)
+    pomContent = replaceSelectorInContent(pomContent, proposal.oldSelector, proposal.proposedSelector)
     fs.writeFileSync(proposal.pomFile, pomContent, 'utf-8')
 
     if (proposal.specPath && proposal.specLine) {
@@ -179,7 +293,11 @@ export function applyHealingProposals(
       if (fs.existsSync(specAbs)) {
         const specContent = fs.readFileSync(specAbs, 'utf-8')
         if (!isManualSpecLine(specContent, proposal.specLine)) {
-          const updatedSpec = specContent.replaceAll(proposal.oldSelector, proposal.proposedSelector)
+          const updatedSpec = replaceSelectorInContent(
+            specContent,
+            proposal.oldSelector,
+            proposal.proposedSelector,
+          )
           fs.writeFileSync(specAbs, updatedSpec, 'utf-8')
         }
       }

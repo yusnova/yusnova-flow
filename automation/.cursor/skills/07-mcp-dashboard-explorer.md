@@ -52,22 +52,38 @@ Extension rule: add new routes to `server.ts`, new handler functions to `handler
 
 ```bash
 cd automation
-npm run explore:bugs -- --url https://<host>/ --max-pages 8 --max-actions-per-page 15
-npm run explore:bugs -- --url https://<host>/ --headless --ingest-rag --module checkout
+npm run explore:bugs -- --url https://<host>/ --domain checkout --max-pages 8 --headless
+npm run explore:bugs -- --url https://<host>/ --domain checkout --ingest-rag --skip-human-gates
+npm run explore:bugs   # interactive wizard when --url omitted
 ```
 
-Crawls breadth-first (same-origin by default), clicking through buttons/links, and flags anomalies via `scripts/explorer-agent/detectors.ts`:
+**Same pattern as `stlc:orchestrator`:** phase runners + `state.json` + audit trail + quality gate.
+
+| Phase | What it does |
+|-------|----------------|
+| `setup` | Validate URL / budget |
+| `crawl` | BFS bug-hunt (`BugHunterAgent`) |
+| `triage` | Anomalies → defects (marks likely validation-copy as noise) |
+| `review` | Human gate if open critical findings (`--skip-human-gates` to auto-ack) |
+| `reporting` | `exploration-report.md` + quality gate |
+| `rag` | Optional `--ingest-rag` into `DefectKnowledgeBase` |
+
+Detectors live in `scripts/explorer-agent/detectors.ts`:
 - `console_error` / `page_error` — browser console errors and uncaught JS exceptions
 - `network_error` — failed requests and 4xx/5xx responses
 - `error_text_on_page` — regex signatures for leaked stack traces, 5xx text, `[object Object]`, `NaN`, generic error-boundary copy
 - `broken_image` — `<img>` with `naturalWidth === 0` after load
 
-Every anomaly gets a screenshot + action trail. Output: `tmp/stlc/exploration/{runId}/{exploration-report.md, anomalies.json, screenshots/}`.
+Output: `tmp/stlc/exploration/{runId}/{state.json, exploration-report.md, anomalies.json, screenshots/}`.
 
-`--ingest-rag` converts critical/major anomalies into `DefectRecord`s and feeds them into `DefectKnowledgeBase.ingestFromDefects()` (same RAG store the requirements/design agents query) — this is how "bugs found by chance" become "requirements the next STLC run gets warned about."
+`--ingest-rag` converts open critical/major defects into `DefectRecord`s and feeds them into `DefectKnowledgeBase.ingestFromDefects()` (same RAG store the requirements/design agents query).
 
-**This does NOT run inside CI by default** (it's exploratory, not a regression gate) and does NOT modify any code — it only reads pages and writes reports/screenshots under `tmp/stlc/exploration/`. Old exploration runs are auto-pruned before each `explore:bugs` start (same retention as STLC: `STLC_TMP_KEEP_RUNS` / `STLC_TMP_MAX_AGE_DAYS`, or `--no-tmp-prune`).
+**Not the same as STLC `--explore`** (that is codegen `PageExplorer` for selectors). Explore does **not** run inside CI by default and does **not** modify product/test code — only reports under `tmp/stlc/exploration/`. Old runs are auto-pruned (`STLC_TMP_KEEP_RUNS` / `STLC_TMP_MAX_AGE_DAYS`, or `--no-tmp-prune`).
 
 ### Extending detectors
 
 Add new signatures to `ERROR_TEXT_PATTERNS` in `detectors.ts` (keep them specific — this list intentionally avoids matching the literal word "error" to keep noise low). Add new anomaly types to `AnomalyType` in `types.ts` and wire a new listener/scan function the same way `attachAnomalyListeners` / `scanVisibleErrorText` are wired.
+
+### Extending phases
+
+Add a runner under `scripts/explorer-agent/agents/`, register it in `orchestrator.ts` `PHASE_RUNNERS`, extend `ExplorePhase` + `DEFAULT_EXPLORE_PHASE_ORDER` in `state.ts` / `types.ts`. Keep the STLC-style contract: every phase appends an audit entry and returns `{ nextPhase, state }`.

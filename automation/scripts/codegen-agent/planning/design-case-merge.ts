@@ -21,6 +21,12 @@ import {
 import { gotoPathFromUrl } from '@codegen-agent/utils/url-utils'
 import { cleanVerifyTitle, looksLikeInternalDesignedTitle } from '@codegen-agent/naming/test-naming'
 import { classifyLinkTarget, escapeRegExp, isDestructiveLabel } from '@codegen-agent/safety/interaction-safety'
+import {
+  buildWizardHappySteps,
+  buildWizardNegativeSteps,
+  detectWizard,
+  WizardNegativeKind,
+} from '@codegen-agent/planning/wizard-flow'
 
 export interface DesignedCaseMergeInput {
   id: string
@@ -377,6 +383,35 @@ function buildDesignedTestCase(
     return buildInventoryNegativeBoundary(designed, plan, pageVar)
   }
 
+  // Multi-step funnel pages (booking/checkout/onboarding): drive the real flow
+  // instead of emitting fixme placeholders.
+  const wizard = detectWizard(plan.elements)
+  if (wizard) {
+    const navigate = navigateStep(pageVar, plan.url)
+    if (designed.type === 'happy-path') {
+      return {
+        id: designed.id,
+        title: designedTitle(designed, plan),
+        caseType: 'happy-path',
+        fixtures: pageVar,
+        requiresApiSetup: false,
+        steps: buildWizardHappySteps(pageVar, navigate, wizard),
+      }
+    }
+    const kind: WizardNegativeKind = designed.type === 'boundary' ? 'boundary' : 'invalid'
+    const steps = buildWizardNegativeSteps(pageVar, navigate, wizard, kind)
+    if (steps) {
+      return {
+        id: designed.id,
+        title: designedTitle(designed, plan),
+        caseType: designed.type === 'boundary' ? 'boundary' : 'negative',
+        fixtures: pageVar,
+        requiresApiSetup: false,
+        steps,
+      }
+    }
+  }
+
   if (designed.type === 'happy-path' && designed.level === 'ui') {
     return buildGenericHappyPath(designed, plan, pageVar)
   }
@@ -605,7 +640,10 @@ export function mergeDesignCasesIntoPlan(
   const addedSignatures = new Set<string>()
 
   for (const designed of designedCases) {
-    if (designed.level !== 'ui' && plan.pattern !== 'generic-form' && plan.pattern !== 'interactive') {
+    // API/e2e/unit cases are emitted by their own generators (e.g. the API
+    // artifact writer produces <domain>.api.spec.ts). Keep the UI spec strictly
+    // UI-level so API contract cases don't leak in as fixme placeholders.
+    if (designed.level !== 'ui') {
       skippedDesignedIds.push(designed.id)
       continue
     }

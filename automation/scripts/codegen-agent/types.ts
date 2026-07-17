@@ -110,6 +110,8 @@ export interface GeneratorOptions {
   noCodegen: boolean
   storageState?: string
   explore: boolean
+  /** Absolute path to the application-under-test source tree (FE/BE) for deep scanning. */
+  appRoot?: string
 }
 
 export interface TestStep {

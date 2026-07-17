@@ -85,6 +85,25 @@ export class BasePage {
     await target.fill(value)
   }
 
+  async check(target: Locator): Promise<void> {
+    await target.check()
+  }
+
+  /** Click an element by raw CSS/attribute selector (fallback for codegen-recorded actions). */
+  async clickBySelector(selector: string): Promise<void> {
+    await this.page.locator(selector).first().click()
+  }
+
+  /** Fill an input by raw CSS/attribute selector (fallback for codegen-recorded actions). */
+  async fillBySelector(selector: string, value: string): Promise<void> {
+    await this.page.locator(selector).first().fill(value)
+  }
+
+  /** Select a native <select> option by raw CSS/attribute selector (fallback for codegen-recorded actions). */
+  async selectBySelector(selector: string, value: string): Promise<void> {
+    await this.page.locator(selector).first().selectOption(value)
+  }
+
   async goBack(): Promise<void> {
     await this.page.goBack()
   }

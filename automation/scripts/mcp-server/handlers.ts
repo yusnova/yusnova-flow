@@ -17,8 +17,9 @@ import * as path from 'node:path'
 import { normalizeDomainName } from '@codegen-agent/naming/domain-name'
 import { normalizePageName } from '@codegen-agent/naming/page-name'
 import { GeneratorOptions } from '../codegen-agent/types'
-import { BugHunterAgent } from '../explorer-agent/crawler'
-import { ExplorationReport } from '../explorer-agent/types'
+import { ExploreOrchestrator } from '../explorer-agent/orchestrator'
+import { createInitialExploreState, saveExploreState } from '../explorer-agent/state'
+import { ExplorationReport, ExploreOrchestratorOptions } from '../explorer-agent/types'
 import { analyzeTestImpact, listAllDomains } from '../shared/test-impact-analysis'
 import { TestHistoryTracker } from '../stlc-orchestrator/flaky/test-history'
 import { approveAllProposals, approveProposal, rejectProposal } from '../stlc-orchestrator/healing/proposal-actions'
@@ -225,32 +226,51 @@ export function validateDomain(domain: string): ValidateResult {
 
 export interface ExploreBugsParams {
   url: string
+  domain?: string | undefined
   maxPages?: number | undefined
   maxActionsPerPage?: number | undefined
   headless?: boolean | undefined
   sameOriginOnly?: boolean | undefined
   storageState?: string | undefined
   outputDir?: string | undefined
+  ingestRag?: boolean | undefined
+  skipHumanGates?: boolean | undefined
 }
 
 /**
- * Runs the autonomous exploration ("bug-hunter") agent: crawls a live page
- * breadth-first, clicking through controls, and flags anomalies (JS
- * errors, network failures, visible error text, broken images) without
- * needing any pre-written test cases. Complements — does not replace —
- * the scripted STLC pipeline.
+ * Runs the explore:bugs mini-orchestrator (setup → crawl → triage → review →
+ * reporting → rag). Complements — does not replace — the scripted STLC pipeline.
  */
-export async function exploreBugs(params: ExploreBugsParams): Promise<ExplorationReport> {
-  const agent = new BugHunterAgent()
-  return agent.explore({
+export async function exploreBugs(params: ExploreBugsParams): Promise<ExplorationReport & { statePath: string }> {
+  const options: ExploreOrchestratorOptions = {
     url: params.url,
+    domain: params.domain ?? 'explored',
     headless: params.headless ?? true,
     maxPages: params.maxPages ?? 5,
     maxActionsPerPage: params.maxActionsPerPage ?? 15,
     sameOriginOnly: params.sameOriginOnly ?? true,
     outputDir: params.outputDir ? path.resolve(params.outputDir) : path.join(DEFAULT_OUTPUT, 'exploration'),
+    ingestRag: params.ingestRag ?? false,
+    skipHumanGates: params.skipHumanGates ?? true,
     ...(params.storageState ? { storageState: params.storageState } : {}),
-  })
+  }
+
+  const initial = createInitialExploreState(options)
+  saveExploreState(initial, options.outputDir)
+  const result = await new ExploreOrchestrator().run(initial, options)
+
+  return {
+    runId: result.state.runId,
+    startUrl: result.state.url,
+    pagesVisited: result.state.pagesVisited,
+    actionsPerformed: result.state.actionsPerformed,
+    anomalies: result.state.anomalies,
+    outputDir: path.join(options.outputDir, result.state.runId),
+    reportPath: result.reportPath || path.join(options.outputDir, result.state.runId, 'exploration-report.md'),
+    jsonPath: result.state.jsonPath ?? path.join(options.outputDir, result.state.runId, 'anomalies.json'),
+    screenshotsDir: result.state.screenshotsDir ?? path.join(options.outputDir, result.state.runId, 'screenshots'),
+    statePath: result.statePath,
+  }
 }
 
 export interface RunPipelineParams {

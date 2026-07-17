@@ -4,6 +4,7 @@ import {
   isDemoRequirementText,
   isFindingRelevantToDomain,
   shouldAutoSynthesizeRequirements,
+  shouldEnrichRequirements,
 } from './requirement-synthesizer'
 import { CodebaseFinding } from '../shared/codebase-scanner'
 
@@ -13,6 +14,15 @@ assert.equal(
   isDemoRequirementText('AC: User can view the product list\nAC: User must be able to add items to cart\nAC: User can sort products by price'),
   true,
 )
+
+assert.equal(
+  shouldEnrichRequirements(
+    'AC1: User can look up a UK postcode. AC2: User can select waste. AC3: User can select skip. AC4: User can confirm booking.',
+    undefined,
+  ),
+  false,
+)
+assert.equal(shouldEnrichRequirements('AC: User can open the page', undefined), true)
 
 const blogCriteria = inferCriteriaFromUrl('https://ozturksoft.net/blog', 'blog')
 assert.ok(blogCriteria.some((line) => /blog listing/i.test(line)))

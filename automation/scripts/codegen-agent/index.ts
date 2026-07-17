@@ -198,7 +198,7 @@ function printSummary(o: {
 ${locatorNote}
   Next steps:
     1. Review generated files and adapt assertions
-    2. Run: \x1b[1mnpm run validate -- --domain ${path.basename(path.dirname(o.specPath))}\x1b[0m
+    2. Run: \x1b[1mnpm run validate:conventions -- --domain ${path.basename(path.dirname(o.specPath))}\x1b[0m
     3. Commit when green.
 `)
 }

@@ -6,8 +6,8 @@ import { consolidateTestGroups } from '@codegen-agent/planning/describe-groups'
 import { mergeSpecPreservingManual, tagGeneratedSpec } from '@codegen-agent/planning/spec-merge'
 import { toTestName } from '@codegen-agent/naming/test-naming'
 import { toPageVar } from '@codegen-agent/naming/page-name'
+import type { CodegenAction } from '../types'
 import {
-  CodegenAction,
   SpecCaseData,
   SpecGroupData,
   SpecTemplateData,
@@ -43,11 +43,12 @@ export class SpecWriter {
       throw new Error(`Spec already exists: ${outPath} (use --overwrite to replace)`)
     }
 
-    const groups = this.annotateWithCodegen(
-      consolidateTestGroups(plan.testGroups),
-      opts.codegenActions,
-      pageVar,
-      testType,
+    // Explore/codegen-raw clicks are discovery-only — never inject them into the
+    // first test (that produced clickBySelector noise and poisoned happy paths).
+    void opts.codegenActions
+
+    const groups = consolidateTestGroups(plan.testGroups).map((group) =>
+      this.buildGroupData(group, pageVar, testType),
     )
     const data: SpecTemplateData = {
       domain: plan.domain,
@@ -72,48 +73,19 @@ export class SpecWriter {
     return outPath
   }
 
-  private annotateWithCodegen(
-    groups: TestGroup[],
-    codegenActions: CodegenAction[],
-    pageVar: string,
-    testType: TestType,
-  ): SpecGroupData[] {
-    return groups.map((g, gi) =>
-      this.buildGroupData(g, gi === 0 ? codegenActions : [], pageVar, testType),
-    )
-  }
-
   private buildGroupData(
     group: TestGroup,
-    codegenActions: CodegenAction[],
     pageVar: string,
     testType: TestType,
   ): SpecGroupData {
     const requiresApiSetup = group.requiresApiSetup || testType === 'e2e'
     const apiEndpoint = group.apiEndpoint || `/${pageVar.replace('Page', 's').toLowerCase()}`
 
-    const cases: SpecCaseData[] = group.cases.map((tc, ci) => {
+    const cases: SpecCaseData[] = group.cases.map((tc) => {
       const steps = tc.steps.map((step) => ({
         description: step.description,
         lines: step.code,
       }))
-
-      if (ci === 0 && codegenActions.length > 0) {
-        const codegenLines = codegenActions
-          .filter((a) => !a.isRemoved)
-          .map((a) => a.transformed)
-          .filter((line) => !/^\s*test\s*\(/.test(line))
-          .filter((line) => !/^\s*\}\);?\s*$/.test(line))
-          .filter((line, index, all) => {
-            if (!/\.page\.goto\(/.test(line)) return true
-            const firstGoto = all.findIndex((entry) => /\.page\.goto\(/.test(entry))
-            return index === firstGoto
-          })
-
-        if (steps[0] && codegenLines.length > 0) {
-          steps[0] = { ...steps[0], lines: [...steps[0].lines, ...codegenLines] }
-        }
-      }
 
       return {
         id: tc.id,

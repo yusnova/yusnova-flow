@@ -8,6 +8,7 @@ import {
 } from '../types'
 import { createLlmClient, parseJsonResponse } from '../llm/llm-client'
 import { DefectKnowledgeBase, formatRagContext } from '../rag/defect-knowledge'
+import { parseAcceptanceCriteria } from '../requirements/ac-parser'
 
 const UNTESTABLE_PATTERNS = [
   { pattern: /\b(user[- ]?friendly|intuitive|easy to use)\b/i, reason: 'Subjective usability term' },
@@ -15,8 +16,6 @@ const UNTESTABLE_PATTERNS = [
   { pattern: /\b(etc\.?|and so on)\b/i, reason: 'Open-ended enumeration' },
   { pattern: /\b(as needed|if possible|maybe)\b/i, reason: 'Non-committal language' },
 ]
-
-const AC_LINE = /^(?:AC|Given|When|Then|Acceptance|Criteria)[:\s-]/i
 
 interface LlmRequirementsResult {
   ambiguityFlags: AmbiguityFlag[]
@@ -38,15 +37,12 @@ function heuristicAnalysis(text: string): {
       severity: 'medium' as const,
     }))
 
-  const lines = text.split('\n').map((line) => line.trim()).filter(Boolean)
-  const acceptanceCriteria = lines
-    .filter((line) => AC_LINE.test(line) || line.startsWith('- '))
-    .map((line, index) => ({
-      id: `AC-${String(index + 1).padStart(3, '0')}`,
-      text: line.replace(/^-\s*/, ''),
-      testable: !UNTESTABLE_PATTERNS.some(({ pattern }) => pattern.test(line)),
-      mappedTestCaseIds: [],
-    }))
+  const acceptanceCriteria = parseAcceptanceCriteria(text).map((parsed, index) => ({
+    id: `AC-${String(index + 1).padStart(3, '0')}`,
+    text: parsed.text,
+    testable: !UNTESTABLE_PATTERNS.some(({ pattern }) => pattern.test(parsed.text)),
+    mappedTestCaseIds: [],
+  }))
 
   const testableCount = acceptanceCriteria.filter((ac) => ac.testable).length
   const testabilityScore = acceptanceCriteria.length === 0

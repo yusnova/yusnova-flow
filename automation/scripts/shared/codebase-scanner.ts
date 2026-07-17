@@ -39,6 +39,8 @@ const WORKFLOW_KEYWORDS = [
   { pattern: /checkout|payment|billing|cart/i, label: 'checkout / cart workflow' },
   { pattern: /inventory|catalog|product/i, label: 'product catalog workflow' },
   { pattern: /register|sign[\s-]?up/i, label: 'registration workflow' },
+  { pattern: /booking|postcode|skip\s*hire|waste|lookup/i, label: 'booking / skip-hire workflow' },
+  { pattern: /wizard|multi[- ]?step|funnel|onboarding/i, label: 'multi-step wizard workflow' },
 ]
 
 const UNSTABLE_MARKERS = [/TODO/i, /FIXME/i, /HACK/i, /experimental/i, /unstable/i, /@deprecated/i]

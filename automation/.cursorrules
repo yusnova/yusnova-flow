@@ -18,7 +18,7 @@
 ## 0 · Token-efficiency gate (read this first on EVERY session)
 - Before generating any test file, POM, or fixture: READ the matching skill file
   from .cursor/skills/ first. Never produce a pattern from memory when a skill file exists.
-- Never regenerate a file that already passes `npm run validate` without explicit user instruction.
+- Never regenerate a file that already passes `npm run validate:conventions` without explicit user instruction.
 - Test generation: ONE file per response. Ask before continuing to the next file.
 - Before rewriting a file: diff first. If the change is < 5 lines, use StrReplace only.
   Never do a full-file rewrite for minor changes.

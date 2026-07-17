@@ -32,6 +32,10 @@ type LoginResponse = { accessToken?: string; token?: string }
 const WORKER_LOGIN_TIMEOUT_MS = 10_000
 
 const fetchWorkerApiToken = async (): Promise<string> => {
+  if (process.env['DEMO_SKIP_AUTH']?.trim().toLowerCase() === 'true') {
+    return ''
+  }
+
   try {
     const { data } = await axios.post<LoginResponse>(
       `${configEnv.apiBaseURL}/auth/login`,

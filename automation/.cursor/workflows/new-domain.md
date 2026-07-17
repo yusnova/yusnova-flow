@@ -88,14 +88,14 @@ Check console output for `⚠ low=N` warnings (low-confidence selectors).
 
 ```bash
 cd automation
-npm run validate -- \
+npm run validate:conventions -- \
   --domain  projects           \
   --base-url http://localhost:3000
 ```
 
 With browser selector check (recommended for CI setup):
 ```bash
-npm run validate -- \
+npm run validate:conventions -- \
   --domain  projects           \
   --base-url http://localhost:3000 \
   --browser
@@ -149,7 +149,7 @@ If a test fails:
 ## Step 8 · Final integration checklist
 
 - [ ] `npx tsc --noEmit` passes
-- [ ] `npm run validate -- --domain {feature}` ≥ 80% auto-fix rate
+- [ ] `npm run validate:conventions -- --domain {feature}` ≥ 80% auto-fix rate
 - [ ] `npx playwright test --grep @{feature}` green on all browsers
 - [ ] All `// TODO` comments in generated files resolved
 - [ ] No hardcoded passwords or secrets
@@ -167,7 +167,7 @@ If a test fails:
 npm run codegen:agent -- --url https://<host>/example-path --domain domainName --page PomPageName --type ui
 
 # Validate
-npm run validate -- --domain FEAT --base-url URL
+npm run validate:conventions -- --domain FEAT --base-url URL
 
 # Run feature tests
 npx playwright test --grep @FEAT

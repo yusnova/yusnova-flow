@@ -196,7 +196,7 @@ export async function runReviewCodeAgent(
 ): Promise<AgentResult> {
   const automationRoot = path.resolve(__dirname, '..', '..', '..')
   const domain = options.codegen.domain
-  const result = spawnSync('npm', ['run', 'validate', '--', '--domain', domain], {
+  const result = spawnSync('npm', ['run', 'validate:conventions', '--', '--domain', domain], {
     cwd: automationRoot,
     encoding: 'utf-8',
   })

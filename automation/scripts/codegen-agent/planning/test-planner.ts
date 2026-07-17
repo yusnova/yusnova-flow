@@ -21,6 +21,13 @@ import {
 } from '@codegen-agent/writers/spec-pom-lines'
 import { gotoPathFromUrl } from '@codegen-agent/utils/url-utils'
 import { classifyLinkTarget, escapeRegExp, isDestructiveLabel } from '@codegen-agent/safety/interaction-safety'
+import {
+  buildWizardHappySteps,
+  buildWizardNegativeSteps,
+  detectWizard,
+  WizardModel,
+  WizardNegativeKind,
+} from '@codegen-agent/planning/wizard-flow'
 
 let tcCounter = 0
 
@@ -453,6 +460,12 @@ export class TestPlanner {
    */
   private genericFormGroups(pageName: string, url: string, elements: ResolvedElement[]): TestGroup[] {
     const page = toPageVar(pageName)
+
+    const wizard = detectWizard(elements)
+    if (wizard) {
+      return this.wizardGroups(page, url, wizard)
+    }
+
     const fillSteps = elements
       .filter((e) => e.uiAction === 'fillInput')
       .map((e) => specFillLocator(page, e.propertyName, 'test value'))
@@ -506,6 +519,56 @@ export class TestPlanner {
               ]),
             ]),
           ),
+      },
+    ]
+  }
+
+  /**
+   * Multi-step "wizard"/funnel pages (booking flows, checkout, onboarding):
+   * one URL that swaps steps client-side. Walks the whole funnel end-to-end for
+   * the happy path and drives the real entry form for validation cases.
+   */
+  private wizardGroups(page: string, url: string, wizard: WizardModel): TestGroup[] {
+    const navigate = navigateStep(page, url)
+
+    const validationCases: TestCase[] = []
+    const negativeKinds: WizardNegativeKind[] = ['empty', 'invalid', 'boundary']
+    const negativeTitles: Record<WizardNegativeKind, string> = {
+      empty: 'submitting the first step with empty input does not advance the flow',
+      invalid: 'submitting the first step with invalid input does not advance the flow',
+      boundary: 'oversized boundary input keeps the first step usable',
+    }
+    for (const kind of negativeKinds) {
+      const steps = buildWizardNegativeSteps(page, navigate, wizard, kind)
+      if (!steps) continue
+      validationCases.push(
+        this.makeCase(negativeTitles[kind], kind === 'boundary' ? 'boundary' : 'negative', page, steps),
+      )
+    }
+
+    return [
+      {
+        groupName: 'Happy Path',
+        requiresApiSetup: false,
+        apiSetupDescription: '',
+        apiEndpoint: '',
+        stateKey: '',
+        cases: [
+          this.makeCase(
+            'completing every step confirms the booking',
+            'happy-path',
+            page,
+            buildWizardHappySteps(page, navigate, wizard),
+          ),
+        ],
+      },
+      {
+        groupName: 'Validation',
+        requiresApiSetup: false,
+        apiSetupDescription: '',
+        apiEndpoint: '',
+        stateKey: '',
+        cases: validationCases,
       },
     ]
   }

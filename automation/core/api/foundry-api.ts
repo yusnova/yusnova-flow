@@ -4,6 +4,7 @@ import {
   AuthApi,
   Configuration,
   ProductsApi,
+  BookingApi,
   type ConfigurationParameters,
 } from '@core/api/generated'
 
@@ -21,10 +22,12 @@ const createConfiguration = (accessToken?: string): Configuration => {
 export class FoundryAPI {
   readonly Auth: AuthApi
   readonly Products: ProductsApi
+  readonly Booking: BookingApi
 
   private constructor(config: Configuration) {
     this.Auth = new AuthApi(config)
     this.Products = new ProductsApi(config)
+    this.Booking = new BookingApi(config)
   }
 
   static create(accessToken = ''): FoundryAPI {

@@ -20,10 +20,11 @@ export interface PageExploreResult {
 }
 
 const CLICK_TIMEOUT_MS = 5_000
-const SKIP_BUTTON_PATTERN = /logout/i
+const SKIP_BUTTON_PATTERN = /logout|retry|start\s*again|dismiss|close\b/i
 const SKIP_LINK_DATA_TEST = /sidebar|logout/i
 const SKIP_LINK_ID = /sidebar|burger/i
-const SKIP_OVERLAY_ACTION_PATTERN = /delete|remove|submit|confirm|pay|purchase|logout/i
+const SKIP_OVERLAY_ACTION_PATTERN = /delete|remove|submit|confirm|pay|purchase|logout|retry/i
+const SKIP_EXPLORE_BUTTON = /retry|error|lookup-error|start[-_ ]?again|normalize|demo/i
 
 export class PageExplorer {
   async explore(opts: PageExploreOptions): Promise<PageExploreResult> {
@@ -45,6 +46,13 @@ export class PageExplorer {
 
     try {
       recordElements(await scanPageElements(page))
+
+      // Multi-step wizard advancement: fill inputs with realistic values and
+      // click the primary "advance" control to reach downstream steps, scanning
+      // the newly revealed elements at each stage. Best-effort, non-destructive.
+      await this.advanceWizard(page, recordElements, () => {
+        skipped += 1
+      })
 
       await this.exploreSelects(page, lines, () => {
         skipped += 1
@@ -77,6 +85,135 @@ export class PageExplorer {
     return {
       outputPath: opts.outputPath,
       discoveredElements,
+    }
+  }
+
+  /**
+   * Walk a multi-step form/wizard: on each step fill visible empty inputs with
+   * realistic values, pick the first option in radio/option groups, then click a
+   * primary advance control (Next/Continue/Lookup/…). Re-scans after each hop to
+   * capture elements that only exist on later steps. Deterministic + best-effort.
+   */
+  private async advanceWizard(
+    page: Page,
+    recordElements: (elements: ElementInfo[]) => void,
+    onSkip: () => void,
+  ): Promise<void> {
+    const MAX_STEPS = 8
+    const ADVANCE = /next|continue|proceed|look\s*up|search|show|get.*(quote|skip)|review|confirm|book|submit|apply/i
+    const BACK = /back|previous|cancel|prev\b/i
+    const startUrl = page.url()
+
+    for (let step = 0; step < MAX_STEPS; step++) {
+      await this.fillVisibleInputs(page)
+      await this.pickFirstOptions(page)
+
+      const buttonsLocator = page.locator('button:visible, [role="button"]:visible')
+      const count = await buttonsLocator.count().catch(() => 0)
+      let advanced = false
+
+      for (let i = 0; i < count; i++) {
+        const button = buttonsLocator.nth(i)
+        const label = await this.readLabel(button)
+        if (!ADVANCE.test(label) || BACK.test(label)) continue
+        if (SKIP_BUTTON_PATTERN.test(label)) continue
+
+        const before = await page.content().catch(() => '')
+        const clicked = await this.tryAction(button, async () => {
+          await button.click({ timeout: CLICK_TIMEOUT_MS })
+        })
+        if (!clicked) {
+          onSkip()
+          continue
+        }
+
+        await page.waitForLoadState('domcontentloaded').catch(() => undefined)
+        await page.waitForTimeout(700)
+        const after = await page.content().catch(() => '')
+        if (after !== before) {
+          recordElements(await scanPageElements(page))
+          advanced = true
+          break
+        }
+      }
+
+      if (!advanced) break
+    }
+
+    // Reload the entry page so the generic (button/link) exploration below runs
+    // against a stable step 1 instead of a deep wizard state. A full reload also
+    // resets client-side wizards that keep step state in memory (no URL change).
+    await page.goto(startUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 }).catch(() => undefined)
+    await page.waitForTimeout(300)
+  }
+
+  /** Read a button's label from text + data-testid + aria-label with bounded timeouts. */
+  private async readLabel(locator: Locator): Promise<string> {
+    const text = await locator.textContent({ timeout: 1_500 }).catch(() => '')
+    const testId = await locator.getAttribute('data-testid', { timeout: 1_500 }).catch(() => '')
+    const aria = await locator.getAttribute('aria-label', { timeout: 1_500 }).catch(() => '')
+    return `${text ?? ''} ${testId ?? ''} ${aria ?? ''}`.trim()
+  }
+
+  private async fillVisibleInputs(page: Page): Promise<void> {
+    const inputs = await page
+      .locator('input:visible:not([type="checkbox"]):not([type="radio"]):not([type="submit"]):not([type="button"]), textarea:visible')
+      .all()
+
+    for (const input of inputs) {
+      try {
+        const current = await input.inputValue({ timeout: 1_500 }).catch(() => '')
+        if (current) continue
+        const attr = async (name: string) =>
+          (await input.getAttribute(name, { timeout: 1_500 }).catch(() => '')) ?? ''
+        const name = `${await attr('name')} ${await attr('id')} ${await attr('placeholder')} ${await attr('data-testid')}`.toLowerCase()
+        const type = (await attr('type')) || 'text'
+        await input.fill(this.valueForInput(name, type), { timeout: CLICK_TIMEOUT_MS })
+      } catch {
+        // skip unfillable input
+      }
+    }
+  }
+
+  private valueForInput(hint: string, type: string): string {
+    if (/post\s*code|postal|zip/.test(hint)) return 'SW1A 1AA'
+    if (/email/.test(hint) || type === 'email') return 'qa.user@example.com'
+    if (/phone|mobile|tel/.test(hint) || type === 'tel') return '+447700900123'
+    if (/name/.test(hint)) return 'Ada Lovelace'
+    if (/city|town/.test(hint)) return 'London'
+    if (/address|street|line1/.test(hint)) return '10 Downing Street'
+    if (type === 'number' || /price|amount|qty|quantity|number/.test(hint)) return '2'
+    if (type === 'date') return '2026-01-01'
+    return 'QA Test'
+  }
+
+  /** Select the first option in each radio group and click the first option-like card. */
+  private async pickFirstOptions(page: Page): Promise<void> {
+    try {
+      const radios = await page.locator('input[type="radio"]:visible').all()
+      const seenGroups = new Set<string>()
+      for (const radio of radios) {
+        const group = (await radio.getAttribute('name')) ?? Math.random().toString()
+        if (seenGroups.has(group)) continue
+        seenGroups.add(group)
+        await this.tryAction(radio, async () => {
+          await radio.check({ timeout: CLICK_TIMEOUT_MS })
+        })
+      }
+
+      const optionCard = page
+        .locator('[data-testid*="option"]:visible, [data-testid*="address-option"]:visible, [data-testid*="path"]:visible, [data-testid*="card"]:visible')
+        .first()
+      if (await optionCard.count()) {
+        const label = `${(await optionCard.textContent({ timeout: 1_500 }).catch(() => '')) ?? ''}`
+        if (!SKIP_OVERLAY_ACTION_PATTERN.test(label)) {
+          await this.tryAction(optionCard, async () => {
+            await optionCard.click({ timeout: CLICK_TIMEOUT_MS })
+          })
+        }
+      }
+    } catch {
+      // best effort
     }
   }
 
@@ -172,8 +309,11 @@ export class PageExplorer {
     const buttons = await page.locator('button:visible, [role="button"]:visible').all()
 
     for (const button of buttons) {
-      const label = ((await button.textContent()) ?? '').trim()
-      if (SKIP_BUTTON_PATTERN.test(label)) continue
+      const label = await this.readLabel(button)
+      if (SKIP_BUTTON_PATTERN.test(label) || SKIP_EXPLORE_BUTTON.test(label)) {
+        onSkip()
+        continue
+      }
 
       const selector = await this.resolveSelector(button)
       if (!selector) {
@@ -181,7 +321,9 @@ export class PageExplorer {
         continue
       }
 
-      const line = `await page.locator(${JSON.stringify(selector)}).click();`
+      // Explore clicks are for element discovery only — do not record them into
+      // codegen-raw (that polluted the first generated test). Still click lightly
+      // so overlays / secondary surfaces can be scanned.
       const ok = await this.tryAction(button, async () => {
         await button.click({ timeout: CLICK_TIMEOUT_MS })
       })
@@ -190,7 +332,7 @@ export class PageExplorer {
         continue
       }
 
-      lines.push(line)
+      void lines
       await this.captureOverlaySurfaces(page, lines, recordElements, onSkip)
     }
   }
@@ -219,7 +361,7 @@ export class PageExplorer {
 
       for (let i = 0; i < count; i++) {
         const target = interactive.nth(i)
-        const label = `${(await target.textContent()) ?? ''} ${(await target.getAttribute('aria-label')) ?? ''}`
+        const label = `${(await target.textContent({ timeout: 2_000 }).catch(() => '')) ?? ''} ${(await target.getAttribute('aria-label', { timeout: 2_000 }).catch(() => '')) ?? ''}`
         if (SKIP_OVERLAY_ACTION_PATTERN.test(label)) continue
 
         const selector = await this.resolveSelector(target)

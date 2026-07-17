@@ -14,7 +14,7 @@
 | design | design-agent | Test case design + negative/boundary variants |
 | review_design | review-agent | Coverage gaps, duplicates, human gate for P0 |
 | codegen | codegen-bridge-agent | Calls existing `runCodegenPipeline()` |
-| review_code | review-agent | Runs `npm run validate -- --domain` |
+| review_code | review-agent | Runs `npm run validate:conventions -- --domain` |
 | execution | execution-agent | Optional Playwright run (`--run-tests`) |
 | triage | triage-agent | Failure dedup + defect hypotheses |
 | reporting | reporting-agent | Quality gate recommendation (human decides go/no-go) |
@@ -27,7 +27,7 @@ npm run stlc:orchestrator -- \
   --url https://demo.example.com/products \
   --domain inventory \
   --page InventoryPage \
-  --requirement-file ./requirements/inventory.md \
+  --requirement-file ./requirements/example.md \
   --overwrite
 ```
 

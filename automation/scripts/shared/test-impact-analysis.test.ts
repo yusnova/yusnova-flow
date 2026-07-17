@@ -79,8 +79,8 @@ assert.deepEqual(listAllDomains(path.join(repoRoot, 'automation')), ['auth', 'in
 
 // --- requirement doc change → maps to domain ---
 {
-  const result = analyzeTestImpact(['automation/requirements/inventory.md'], repoRoot)
-  assert.deepEqual(result.affectedDomains, ['inventory'])
+  const result = analyzeTestImpact(['automation/requirements/example.md'], repoRoot)
+  assert.deepEqual(result.affectedDomains, ['example'])
   assert.equal(result.runFullSuite, false)
 }
 

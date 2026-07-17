@@ -119,13 +119,14 @@ export class CodegenAdapter {
     singles: ResolvedElement[],
     groups: RepeatingLocatorGroup[],
     pageVar: string,
-  ): string {
+  ): string | null {
     const locatorClick = line.match(/^await page\.locator\((['"])((?:\\.|(?!\1).)*)\1\)\.click\(\);?$/)
     if (locatorClick) {
       const selector = this.unquoteSelector(locatorClick[2] ?? '')
       const mapped = this.mapSelectorToPomClick(selector, singles, pageVar)
       if (mapped) return mapped
-      return `await ${pageVar}.clickBySelector(${JSON.stringify(selector)})`
+      // Drop unmapped explore clicks instead of emitting clickBySelector.
+      return null
     }
 
     return line
@@ -153,6 +154,21 @@ export class CodegenAdapter {
   ): string | null {
     const el = singles.find((entry) => entry.locator.selector === selector)
     if (el) return this.specClickForElement(pageVar, el)
+
+    const testId =
+      selector.match(/\[data-testid=["']([^"']+)["']\]/)?.[1]
+      ?? selector.match(/\[data-test=["']([^"']+)["']\]/)?.[1]
+    if (testId) {
+      const byTestId = singles.find(
+        (entry) =>
+          entry.dataTest === testId
+          || entry.dataTestId === testId
+          || entry.locator.selector.includes(testId),
+      )
+      if (byTestId) return this.specClickForElement(pageVar, byTestId)
+      // Unmapped explore residue — drop rather than emit clickBySelector noise.
+      return null
+    }
 
     const roleLink = selector.match(/^role=link\[name="(.+)"\]$/)
     if (roleLink) {
@@ -190,13 +206,10 @@ export class CodegenAdapter {
       return `await ${pageVar}.${methodName}(${arg})`
     }
 
-    const el = singles.find((entry) => entry.dataTest === dataTest)
+    const el = singles.find((entry) => entry.dataTest === dataTest || entry.dataTestId === dataTest)
     if (!el) {
-      const selector = `[data-test="${dataTest}"]`
-      if (action === 'selectOption') {
-        return `await ${pageVar}.selectBySelector(${JSON.stringify(selector)}, ${actionArgs})`
-      }
-      return `await ${pageVar}.clickBySelector(${JSON.stringify(selector)})`
+      // Unmapped data-test from explore — drop rather than clickBySelector.
+      return null
     }
 
     const methodName = actionMethodName(el.propertyName, uiAction)

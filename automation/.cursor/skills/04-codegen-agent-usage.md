@@ -78,7 +78,7 @@ npm run codegen:agent -- \
 
 If the console shows `⚠ low=N`:
 1. Ask the FE team to add `data-testid` attributes.
-2. Or validate with `npm run validate -- --domain {feature} --browser --base-url URL`.
+2. Or validate with `npm run validate:conventions -- --domain {feature} --browser --base-url URL`.
 
 ## After generation — review TODOs
 

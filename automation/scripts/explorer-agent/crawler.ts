@@ -27,7 +27,7 @@ function nextAnomalyId(): string {
  */
 export class BugHunterAgent {
   async explore(opts: ExplorationOptions): Promise<ExplorationReport> {
-    const runId = `explore-${Date.now()}`
+    const runId = opts.runId ?? `explore-${Date.now()}`
     const runDir = path.join(opts.outputDir, runId)
     const screenshotsDir = path.join(runDir, 'screenshots')
     fs.mkdirSync(screenshotsDir, { recursive: true })
@@ -106,11 +106,13 @@ export class BugHunterAgent {
     fs.writeFileSync(jsonPath, JSON.stringify(anomalies, null, 2), 'utf-8')
 
     const reportPath = path.join(runDir, 'exploration-report.md')
-    fs.writeFileSync(
-      reportPath,
-      buildMarkdownReport({ runId, startUrl: opts.url, pagesVisited, actionsPerformed, anomalies }),
-      'utf-8',
-    )
+    if (!opts.skipMarkdownReport) {
+      fs.writeFileSync(
+        reportPath,
+        buildMarkdownReport({ runId, startUrl: opts.url, pagesVisited, actionsPerformed, anomalies }),
+        'utf-8',
+      )
+    }
 
     return { runId, startUrl: opts.url, pagesVisited, actionsPerformed, anomalies, outputDir: runDir, reportPath, jsonPath, screenshotsDir }
   }

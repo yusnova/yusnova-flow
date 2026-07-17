@@ -10,7 +10,9 @@ import { runInteractiveWizard } from './interactive-wizard'
 import { StlcOrchestrator } from './orchestrator'
 import {
   shouldAutoSynthesizeRequirements,
+  shouldEnrichRequirements,
   synthesizeRequirements,
+  mergeRequirementTexts,
 } from './requirement-synthesizer'
 import { PR_PHASES } from './profiles'
 import { createInitialState, appendAudit } from './state/pipeline-state'
@@ -85,6 +87,7 @@ function buildProgram(): Command {
     .option('--no-rag', 'disable defect pattern RAG', false)
     .option('--no-self-healing', 'disable selector healing proposals', false)
     .option('--output-dir <path>', 'STLC state output directory', DEFAULT_OUTPUT)
+    .option('--app-root <path>', 'application-under-test source root (FE/BE) for deep API + selector scanning')
     .option('--storage-state <path>', 'auth storage state JSON path')
     .option('--codegen-file <path>', 'pre-recorded codegen file')
     .option('--no-codegen', 'skip built-in playwright codegen step', false)
@@ -111,32 +114,44 @@ async function maybeSynthesizeRequirements(
   requirementText: string,
   requirementFile: string | undefined,
   options: OrchestratorOptions,
-): Promise<string> {
-  if (!shouldAutoSynthesizeRequirements(requirementText, requirementFile)) {
-    return requirementText
+): Promise<{ text: string; enriched: boolean }> {
+  if (!shouldEnrichRequirements(requirementText, requirementFile)) {
+    return { text: requirementText, enriched: false }
   }
 
-  log('info', '     No requirement provided — analyzing page + codebase for acceptance criteria...')
+  const auto = shouldAutoSynthesizeRequirements(requirementText, requirementFile)
+  log(
+    'info',
+    auto
+      ? '     No requirement provided — analyzing page + codebase + app for acceptance criteria...'
+      : '     Sparse requirements — enriching from page + codebase + app scan...',
+  )
   const repoRoot = path.resolve(AUTOMATION_ROOT, '..')
   const synthesized = await synthesizeRequirements({
     url: options.codegen.url,
     domain: options.codegen.domain,
     headless: options.codegen.headless,
     repoRoot,
+    ...(options.codegen.appRoot ? { appRoot: options.codegen.appRoot } : {}),
   })
 
+  const text = auto
+    ? synthesized.text
+    : mergeRequirementTexts(requirementText, synthesized)
+
+  const count = text.split('\n').map((line) => line.trim()).filter(Boolean).length
   log(
     'info',
-    `     Synthesized ${synthesized.acceptanceCriteria.length} AC line(s) from ${synthesized.sources.join(' + ')}`,
+    `     ${auto ? 'Synthesized' : 'Enriched to'} ${count} AC line(s) from ${synthesized.sources.join(' + ')}`,
   )
-  for (const ac of synthesized.acceptanceCriteria.slice(0, 6)) {
-    log('info', `       · ${ac}`)
+  for (const ac of text.split('\n').map((l) => l.trim()).filter(Boolean).slice(0, 8)) {
+    log('info', `       · ${ac.replace(/^AC:\s*/i, '')}`)
   }
-  if (synthesized.acceptanceCriteria.length > 6) {
-    log('info', `       · … and ${synthesized.acceptanceCriteria.length - 6} more`)
+  if (count > 8) {
+    log('info', `       · … and ${count - 8} more`)
   }
 
-  return synthesized.text
+  return { text, enriched: true }
 }
 
 function buildCodegenOptions(raw: {
@@ -150,6 +165,7 @@ function buildCodegenOptions(raw: {
   storageState?: string
   codegenFile?: string
   noCodegen: boolean
+  appRoot?: string
 }): GeneratorOptions {
   if (!['ui', 'api', 'e2e'].includes(raw.type)) {
     throw new Error(`Invalid --type "${raw.type}". Use ui, api, or e2e.`)
@@ -166,6 +182,7 @@ function buildCodegenOptions(raw: {
     noCodegen: raw.noCodegen,
     ...(raw.storageState ? { storageState: raw.storageState } : {}),
     ...(raw.codegenFile ? { codegenFile: raw.codegenFile } : {}),
+    ...(raw.appRoot ? { appRoot: path.resolve(raw.appRoot) } : {}),
   }
 }
 
@@ -199,6 +216,7 @@ async function resolveRun(): Promise<{
     storageState?: string
     codegenFile?: string
     noCodegen: boolean
+    appRoot?: string
     tmpPrune?: boolean
     tmpKeepRuns: string
     tmpMaxAgeDays: string
@@ -229,6 +247,7 @@ async function resolveRun(): Promise<{
     noCodegen: raw.noCodegen,
     ...(raw.storageState ? { storageState: raw.storageState } : {}),
     ...(raw.codegenFile ? { codegenFile: raw.codegenFile } : {}),
+    ...(raw.appRoot ? { appRoot: raw.appRoot } : {}),
   })
 
   const phases = parsePhases(raw.phases)
@@ -330,7 +349,7 @@ ${result.codegenArtifacts
   Next steps:
     1. Review ${relativePath(AUTOMATION_ROOT, result.reportPath)}
     2. Resolve pending human gates if any
-    3. Run: \x1b[1mnpm run validate -- --domain ${result.domain}\x1b[0m
+    3. Run: \x1b[1mnpm run validate:conventions -- --domain ${result.domain}\x1b[0m
 `)
 }
 
@@ -340,20 +359,27 @@ async function main(): Promise<void> {
   autoPruneTmp(tmpPrune)
 
   const autoSynthesized = shouldAutoSynthesizeRequirements(rawRequirementText, requirementFile)
-  const requirementText = await maybeSynthesizeRequirements(rawRequirementText, requirementFile, options)
+  const { text: requirementText, enriched } = await maybeSynthesizeRequirements(
+    rawRequirementText,
+    requirementFile,
+    options,
+  )
   options.requirementText = requirementText
 
-  printBanner(options, { ...(requirementFile ? { file: requirementFile } : {}), autoSynthesized })
+  printBanner(options, {
+    ...(requirementFile ? { file: requirementFile } : {}),
+    autoSynthesized: autoSynthesized || enriched,
+  })
 
   let initialState = createInitialState(requirementText, options)
-  if (autoSynthesized) {
+  if (autoSynthesized || enriched) {
     const acCount = requirementText.split('\n').map((line) => line.trim()).filter(Boolean).length
     initialState = appendAudit(initialState, {
       phase: 'requirements',
       agent: 'requirement-synthesizer',
-      action: 'auto_synthesized_requirements',
-      reason: `Generated ${acCount} acceptance criteria from live page + frontend/backend scan`,
-      confidence: 0.82,
+      action: autoSynthesized ? 'auto_synthesized_requirements' : 'enriched_requirements',
+      reason: `${autoSynthesized ? 'Generated' : 'Enriched'} ${acCount} acceptance criteria from live page + frontend/backend/app scan`,
+      confidence: 0.86,
     })
   }
   const orchestrator = new StlcOrchestrator()
