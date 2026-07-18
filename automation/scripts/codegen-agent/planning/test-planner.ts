@@ -7,7 +7,6 @@ import {
   TestStep,
 } from '../types'
 import { toPageVar } from '@codegen-agent/naming/page-name'
-import { actionMethodName } from '@codegen-agent/locators/element-naming'
 import { collapseRepeatingLocators, RepeatingLocatorGroup } from '@codegen-agent/locators/repeating-locators'
 import { pomGroupListExpr, pomLocatorExpr, resolvePomElementByDataTest } from '@codegen-agent/writers/pom-ref'
 import {
@@ -419,7 +418,7 @@ export class TestPlanner {
               this.makeCase('adding a product updates the cart badge count', 'happy-path', page, [
                 navigateStep(page, url),
                 makeStep('Add product to cart', [
-                  `await ${page}.addProductToCart('sample-product')`,
+                  `await ${page}.click(${page}.addToCart('sample-product'))`,
                 ]),
                 makeStep('Assert cart badge', [
                   cartEl
@@ -441,7 +440,7 @@ export class TestPlanner {
               this.makeCase('clicking a product name opens the detail page', 'happy-path', page, [
                 navigateStep(page, url),
                 makeStep('Open product detail', [
-                  `await ${page}.openItemTitle(0)`,
+                  `await ${page}.click(${page}.itemTitleLink(0))`,
                 ]),
                 makeStep('Assert detail page URL', [
                   `await expect(${page}.page).toHaveURL(/inventory-item/)`,
@@ -683,7 +682,6 @@ export class TestPlanner {
     const options = sortEl.selectOptions?.map((label) => label.trim()).filter(Boolean) ?? []
     if (options.length === 0) return []
 
-    const sortMethod = actionMethodName(sortEl.propertyName, 'selectOption')
     const listAssert = productNames
       ? `await expect(${pomLocatorExpr(page, productNames, 'first')}).toBeVisible()`
       : titleGroup?.listMethodName
@@ -694,7 +692,7 @@ export class TestPlanner {
       this.makeCase(`sorting by ${option.toLowerCase()} updates the product list`, 'happy-path', page, [
         navigateStep(page, url),
         makeStep(`Sort products by ${option}`, [
-          `await ${page}.${sortMethod}(${JSON.stringify(option)})`,
+          `await ${page}.select(${page}.${sortEl.propertyName}, ${JSON.stringify(option)})`,
         ]),
         makeStep('Assert product list remains visible after sort', [
           listAssert,

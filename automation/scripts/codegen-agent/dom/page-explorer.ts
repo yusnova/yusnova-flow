@@ -202,7 +202,9 @@ export class PageExplorer {
       }
 
       const optionCard = page
-        .locator('[data-testid*="option"]:visible, [data-testid*="address-option"]:visible, [data-testid*="path"]:visible, [data-testid*="card"]:visible')
+        .locator(
+          '[data-testid*="option"]:visible, [data-testid*="path"]:visible, [data-testid*="choice"]:visible, [data-testid*="card"]:visible, [data-testid*="plan"]:visible, [data-testid*="tier"]:visible',
+        )
         .first()
       if (await optionCard.count()) {
         const label = `${(await optionCard.textContent({ timeout: 1_500 }).catch(() => '')) ?? ''}`

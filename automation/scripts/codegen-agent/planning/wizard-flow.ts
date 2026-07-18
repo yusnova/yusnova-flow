@@ -12,6 +12,12 @@
 
 import { ResolvedElement, TestStep } from '../types'
 import { smartValue } from '../../shared/smart-values'
+import {
+  collapseRepeatingLocators,
+  findRepeatingGroupForDataTest,
+  pomGroupMemberExpr,
+  type RepeatingLocatorGroup,
+} from '@codegen-agent/locators/repeating-locators'
 
 const RE_ADVANCE = /\b(next|continue|proceed|forward|onwards?)\b/i
 const RE_ADVANCE_TESTID = /next[-_]?from[-_]?step|(?:^|[-_])step[-_]?\d/i
@@ -35,6 +41,8 @@ export interface WizardModel {
   advanceButtons: ResolvedElement[]
   finalButton?: ResolvedElement | undefined
   success?: ResolvedElement | undefined
+  /** Collapsed repeating locator families for locator-first spec lines. */
+  repeatingGroups: RepeatingLocatorGroup[]
 }
 
 function textOf(el: ResolvedElement): string {
@@ -94,14 +102,9 @@ function groupKey(el: ResolvedElement): string {
     .toLowerCase()
     .replace(/\d+/g, '#')
 
-  // Explicit option-family prefixes (waste-path-*, skip-option-*, address-option-*).
-  const family = dashed.match(
-    /^(waste-path|skip-option|address-option|plasterboard-option|option)(?:-|$)/,
-  )
-  if (family) return family[1]!
-
   const segments = dashed.split(/-+/).filter(Boolean)
   if (segments.length <= 1) return dashed
+  // Drop the variable suffix so `plan-tier-gold` / `plan-tier-silver` share `plan-tier`.
   return segments.slice(0, -1).join('-')
 }
 
@@ -126,10 +129,8 @@ function buildChoiceGroups(elements: ResolvedElement[]): WizardChoiceGroup[] {
   const groups: WizardChoiceGroup[] = []
   for (const [key, bucket] of byKey) {
     const isRadio = bucket.every((el) => el.kind === 'input-radio')
-    // A lone button is not a "choice" (it's just an action); radios always are.
-    // Exception: option/path cards (waste-path-*, skip-option-*) even if only one
-    // was discovered on the current step snapshot.
-    const looksLikeOptionCard = /option|path|waste|skip|size|yard/i.test(key)
+    // A lone button is not a "choice" unless the id looks like a selectable card family.
+    const looksLikeOptionCard = /(^|-)(option|path|choice|plan|tier|size|type|card)(-|$)/i.test(key)
     if (!isRadio && bucket.length < 2 && !looksLikeOptionCard) continue
     const sorted = [...bucket].sort((a, b) => a.index - b.index)
     const first = sorted[0]
@@ -142,13 +143,13 @@ function buildChoiceGroups(elements: ResolvedElement[]): WizardChoiceGroup[] {
     })
   }
 
+  // Prefer location/lookup families first, then generic option/path cards, then DOM order.
   return groups.sort((a, b) => {
     const rank = (g: WizardChoiceGroup) => {
       const k = g.key.toLowerCase()
-      if (/address|postcode|lookup/.test(k)) return 0
-      if (/waste|path/.test(k)) return 1
-      if (/skip|yard|size/.test(k)) return 2
-      return 3 + g.minIndex / 1000
+      if (/address|location|postcode|postal|zip|lookup/.test(k)) return 0
+      if (/(^|-)(option|path|choice|plan|tier|size|type|card)(-|$)/.test(k)) return 1
+      return 2 + g.minIndex / 1000
     }
     return rank(a) - rank(b) || a.minIndex - b.minIndex
   })
@@ -173,7 +174,7 @@ export function detectWizard(elements: ResolvedElement[]): WizardModel | undefin
   const isWizard = advanceButtons.length >= 1 && (Boolean(finalButton) || choiceGroups.length >= 2)
   if (!isWizard) return undefined
 
-  return { inputs, trigger, choiceGroups, advanceButtons, finalButton, success }
+  return { inputs, trigger, choiceGroups, advanceButtons, finalButton, success, repeatingGroups: collapseRepeatingLocators(elements).groups }
 }
 
 function dedupeByProperty(elements: ResolvedElement[]): ResolvedElement[] {
@@ -194,10 +195,20 @@ function fillValue(el: ResolvedElement): string {
   return String(smartValue(fieldName(el), primitive as 'string' | 'number'))
 }
 
-function selectFirst(pageVar: string, group: WizardChoiceGroup): string {
+function locatorExpr(pageVar: string, el: ResolvedElement, repeating: RepeatingLocatorGroup[]): string {
+  const dataTest = el.dataTest ?? el.dataTestId ?? el.dataTestIdHyphen
+  if (dataTest) {
+    const hit = findRepeatingGroupForDataTest(repeating, dataTest)
+    if (hit) return pomGroupMemberExpr(pageVar, hit.group, hit.arg)
+  }
+  return `${pageVar}.${el.propertyName}`
+}
+
+function selectFirst(pageVar: string, group: WizardChoiceGroup, repeating: RepeatingLocatorGroup[]): string {
+  const locator = locatorExpr(pageVar, group.first, repeating)
   return group.kind === 'radio'
-    ? `await ${pageVar}.check(${pageVar}.${group.first.propertyName})`
-    : `await ${pageVar}.click(${pageVar}.${group.first.propertyName})`
+    ? `await ${pageVar}.check(${locator})`
+    : `await ${pageVar}.click(${locator})`
 }
 
 function choiceLabel(group: WizardChoiceGroup): string {
@@ -214,18 +225,19 @@ export function buildWizardHappySteps(
   model: WizardModel,
 ): TestStep[] {
   const steps: TestStep[] = [navigate]
+  const repeating = model.repeatingGroups
 
   const entryCode: string[] = model.inputs.map(
-    (el) => `await ${pageVar}.fill(${pageVar}.${el.propertyName}, ${JSON.stringify(fillValue(el))})`,
+    (el) => `await ${pageVar}.fill(${locatorExpr(pageVar, el, repeating)}, ${JSON.stringify(fillValue(el))})`,
   )
   if (model.trigger) {
-    entryCode.push(`await ${pageVar}.click(${pageVar}.${model.trigger.propertyName})`)
+    entryCode.push(`await ${pageVar}.click(${locatorExpr(pageVar, model.trigger, repeating)})`)
   }
   if (entryCode.length > 0) {
     // After a lookup/search trigger the first choice list loads async — assert it.
     if (model.trigger && model.choiceGroups[0]) {
       entryCode.push(
-        `await expect(${pageVar}.${model.choiceGroups[0].first.propertyName}).toBeVisible({ timeout: 15_000 })`,
+        `await expect(${locatorExpr(pageVar, model.choiceGroups[0].first, repeating)}).toBeVisible({ timeout: 15_000 })`,
       )
     }
     steps.push({ description: 'Enter details and start the flow', code: entryCode })
@@ -240,11 +252,11 @@ export function buildWizardHappySteps(
     let description = ''
 
     if (group) {
-      code.push(selectFirst(pageVar, group))
+      code.push(selectFirst(pageVar, group, repeating))
       description = `Choose ${choiceLabel(group)}`
     }
     if (advance) {
-      code.push(`await ${pageVar}.click(${pageVar}.${advance.propertyName})`)
+      code.push(`await ${pageVar}.click(${locatorExpr(pageVar, advance, repeating)})`)
       usedAdvances.add(advance.propertyName)
       description = description ? `${description} and continue` : 'Continue to the next step'
     }
@@ -259,18 +271,18 @@ export function buildWizardHappySteps(
     if (usedAdvances.has(advance.propertyName)) continue
     steps.push({
       description: 'Continue to the next step',
-      code: [`await ${pageVar}.click(${pageVar}.${advance.propertyName})`],
+      code: [`await ${pageVar}.click(${locatorExpr(pageVar, advance, repeating)})`],
     })
     usedAdvances.add(advance.propertyName)
   }
 
   const finalCode: string[] = []
   if (model.finalButton) {
-    finalCode.push(`await ${pageVar}.click(${pageVar}.${model.finalButton.propertyName})`)
+    finalCode.push(`await ${pageVar}.click(${locatorExpr(pageVar, model.finalButton, repeating)})`)
   }
   if (model.success) {
     finalCode.push(
-      `await expect(${pageVar}.${model.success.propertyName}).toBeVisible({ timeout: 15_000 })`,
+      `await expect(${locatorExpr(pageVar, model.success, repeating)}).toBeVisible({ timeout: 15_000 })`,
     )
   } else {
     finalCode.push(`await expect(${pageVar}.page).toHaveURL(/.+/, { timeout: 15_000 })`)
@@ -308,35 +320,38 @@ export function buildWizardNegativeSteps(
   const submit = model.trigger ?? model.advanceButtons[0] ?? model.finalButton
   if (!firstInput || !submit) return undefined
 
+  const repeating = model.repeatingGroups
   const anchor = model.choiceGroups[0]?.first ?? model.success
   const steps: TestStep[] = [navigate]
+  const submitLoc = locatorExpr(pageVar, submit, repeating)
+  const inputLoc = locatorExpr(pageVar, firstInput, repeating)
 
   if (kind === 'empty') {
     steps.push({
       description: 'Submit without entering required input',
-      code: [`await ${pageVar}.click(${pageVar}.${submit.propertyName})`],
+      code: [`await ${pageVar}.click(${submitLoc})`],
     })
   } else if (kind === 'invalid') {
     steps.push({
       description: 'Enter invalid input and submit',
       code: [
-        `await ${pageVar}.fill(${pageVar}.${firstInput.propertyName}, ${JSON.stringify(invalidValueFor(firstInput))})`,
-        `await ${pageVar}.click(${pageVar}.${submit.propertyName})`,
+        `await ${pageVar}.fill(${inputLoc}, ${JSON.stringify(invalidValueFor(firstInput))})`,
+        `await ${pageVar}.click(${submitLoc})`,
       ],
     })
   } else {
     steps.push({
       description: 'Enter oversized boundary input and submit',
       code: [
-        `await ${pageVar}.fill(${pageVar}.${firstInput.propertyName}, ${JSON.stringify('A'.repeat(60))})`,
-        `await ${pageVar}.click(${pageVar}.${submit.propertyName})`,
+        `await ${pageVar}.fill(${inputLoc}, ${JSON.stringify('A'.repeat(60))})`,
+        `await ${pageVar}.click(${submitLoc})`,
       ],
     })
   }
 
-  const assertions: string[] = [`await expect(${pageVar}.${firstInput.propertyName}).toBeVisible()`]
+  const assertions: string[] = [`await expect(${inputLoc}).toBeVisible()`]
   if (anchor && kind !== 'boundary') {
-    assertions.push(`await expect(${pageVar}.${anchor.propertyName}).toBeHidden()`)
+    assertions.push(`await expect(${locatorExpr(pageVar, anchor, repeating)}).toBeHidden()`)
   }
   steps.push({
     description:

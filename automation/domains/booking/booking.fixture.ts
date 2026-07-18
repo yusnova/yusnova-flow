@@ -1,13 +1,13 @@
 import { test as baseTest } from '@core/fixtures/base.fixture'
-import { BookingFlowPage } from '@pages/booking-flow-page'
+import { BookingPage } from '@pages/booking-page'
 
 interface BookingFixtures {
-  bookingFlowPage: BookingFlowPage
+  bookingPage: BookingPage
 }
 
 export const test = baseTest.extend<BookingFixtures>({
-  bookingFlowPage: async ({ page }, use) => {
-    await use(new BookingFlowPage(page))
+  bookingPage: async ({ page }, use) => {
+    await use(new BookingPage(page))
   },
 })
 

@@ -13,6 +13,20 @@ All `npm` commands below run from **`automation/`** unless noted.
 
 ---
 
+## Demo: STLC orchestrator
+
+Watch how **`stlc:orchestrator`** explores an app, scaffolds POM + fixtures, and writes meaningful Playwright tests end-to-end:
+
+**[▶ Auto-generate walkthrough](PASTE_VIDEO_URL_HERE)**
+
+What the video covers:
+
+- running `npm run stlc:orchestrator` against a live URL
+- automatic page discovery → Page Object + domain fixture
+- generated UI specs that follow real user flows (not empty stubs)
+
+---
+
 ## Quick start
 
 ```bash

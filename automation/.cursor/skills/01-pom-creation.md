@@ -4,101 +4,92 @@
 ## File location
 
 ```
-automation/pages/{FeatureName}Page.ts   ← flat, NO sub-folders
+automation/pages/{feature}-page.ts   ← flat, kebab-case (match existing pages)
 ```
 
-Examples: `pages/LoginPage.ts`, `pages/ProductListPage.ts`, `pages/ActivityPage.ts`
+Examples: `pages/login-page.ts`, `pages/booking-page.ts`
+
+---
+
+## Core rule: locator-first (DRY + SOLID)
+
+POMs expose **locators**. Specs call **BasePage** primitives on those locators.
+
+| Do | Don't |
+|----|--------|
+| `await page.fill(page.postcodeInput, value)` | `await page.fillPostcode(value)` thin wrapper |
+| `await page.click(page.lookupButtonBtn)` | `await page.clickLookup()` |
+| `await page.check(page.addressOption('addr_1'))` | N× `toggleAddressOptionAddrNRadio(check)` |
+| `await page.click(page.wastePath('general'))` | `wastePathGeneralBtn` + `wastePathHeavyBtn` + … |
+| `login()` / `submitForm()` composites | — |
+
+**Emit a POM method only when it adds behavior** beyond a one-liner BasePage already owns
+(multi-step orchestration, waits, non-obvious sequencing). Never forward `.fill` / `.click` /
+`.check` / `.selectOption` / `.setInputFiles` through a dedicated wrapper.
+
+**Collapse repeating `data-testid` families** (≥2 siblings, ≥2 static kebab segments) into one
+parameterized locator — radios, checkboxes, buttons, links, inputs. Codegen:
+`collapseRepeatingLocators`.
+
+```typescript
+addressOption(optionId: string): Locator {
+  return this.page.locator(`[data-testid="address-option-${optionId}"]`);
+}
+wastePath(optionId: string): Locator {
+  return this.page.locator(`[data-testid="waste-path-${optionId}"]`);
+}
+
+// in the test:
+await bookingPage.check(bookingPage.addressOption('addr_1'));
+await bookingPage.click(bookingPage.wastePath('general'));
+await bookingPage.click(bookingPage.nextFrom('step1'));
+```
 
 ---
 
 ## Exact template
 
 ```typescript
-import { Page } from '@playwright/test';
-import { BasePage } from './BasePage';  // always relative
+import { Locator, Page } from '@playwright/test';
+import { BasePage } from './base-page';
 
-export class {FeatureName}Page extends BasePage {
+export class FeaturePage extends BasePage {
+  readonly emailInput: Locator;
+  readonly submitBtn: Locator;
+
   constructor(page: Page) {
-    super(page);  // no ctx, no UiActions instance
+    super(page);
+    this.emailInput = page.locator('[data-testid="email-input"]');
+    this.submitBtn = page.locator('[data-testid="submit-btn"]');
   }
 
-  get url(): string {
-    return '/path/to/page';
+  // Parameterized families only — no per-option fields / toggles
+  planOption(optionId: string): Locator {
+    return this.page.locator(`[data-testid="plan-option-${optionId}"]`);
   }
 
-  // ─── Locators (private getters only) ────────────────────────────────────
-  // Priority: data-testid > #id > [name] > aria-label > css-path
-  // NEVER use getByLabel() or getByRole()
-
-  private get emailInput() {
-    return this.page.locator('[data-testid="email-input"]');
-  }
-
-  private get submitBtn() {
-    return this.page.locator('[data-testid="submit-btn"]');
-  }
-
-  // ─── Load detection ──────────────────────────────────────────────────────
-
-  async waitForLoad(): Promise<void> {
-    await this.page.waitForURL(/\/path\/to\/page/);
-    await this.assertVisible(this.emailInput, 'Email input');
-    await this.assertVisible(this.submitBtn, 'Submit button');
-  }
-
-  // ─── Interactions ────────────────────────────────────────────────────────
-  // Call inherited BasePage methods: this.fillInput, this.clickElement, etc.
-  // DO NOT create a new UiActions instance.
-
-  async fillEmail(email: string): Promise<void> {
-    await this.fillInput(this.emailInput, email);
-  }
-
-  async clickSubmit(): Promise<void> {
-    await this.clickElement(this.submitBtn);
-  }
-
+  // Composite only when multi-step
   async login(email: string, password: string): Promise<void> {
-    await this.fillEmail(email);
-    await this.fillInput(this.page.locator('[data-testid="password-input"]'), password);
-    await this.clickSubmit();
+    await this.fill(this.emailInput, email);
+    await this.fill(this.page.locator('[data-testid="password-input"]'), password);
+    await this.click(this.submitBtn);
   }
 
-  // ─── Assertions ──────────────────────────────────────────────────────────
-  // All assertion methods start with `assert`.
-  // Accept string | RegExp for text checks.
-
-  async assertErrorBanner(expected: string | RegExp): Promise<void> {
-    const banner = this.page.locator('[data-testid="error-banner"]');
-    await this.assertVisible(banner, 'Error banner');
-    if (typeof expected === 'string') {
-      await this.assertText(banner, expected);
-    } else {
-      await this.assertTextRegex(banner, expected);
-    }
+  async expectLoaded(): Promise<void> {
+    await this.expectPageLoaded();
   }
-
-  async assertRedirectedTo(pattern: string | RegExp): Promise<void> {
-    await this.assertURL(pattern, 'Redirect URL');
-  }
-}
-```
+}```
 
 ---
 
-## Key differences from old pattern
+## BasePage primitives (use these in specs)
 
-| Old (deleted) | New |
-|---------------|-----|
-| `import { UiActions } from 'core/ui/actions/UiActions'` | ❌ removed |
-| `private readonly actions: UiActions` | ❌ removed |
-| `this.actions.fillInput(...)` | `this.fillInput(...)` (BasePage method) |
-| `constructor(page, ctx: ITestContext)` | `constructor(page: Page)` |
-| Located in `domains/auth/pages/` | Located in `pages/` (flat) |
+- `click(locator)` / `fill(locator, value)` / `check` / `uncheck` / `select` / `setFiles`
+- Prefer these over inventing `fillX` / `clickX` / `toggleX` on every page
 
 ---
 
-## Selector priority (enforced by `.cursorrules`)
+## Selector priority
 
 | # | Pattern | Confidence |
 |---|---------|------------|
@@ -108,34 +99,20 @@ export class {FeatureName}Page extends BasePage {
 | 4 | `[aria-label="value"]` | medium |
 | 5 | `tag[attr] > child` (≤ 3 levels) | low |
 
-**Never use:** `getByLabel()`, `getByRole()`, `nth-child()`, generated class names.
-
----
-
-## Domain fixture wiring (in `domains/{feature}/{feature}.fixture.ts`)
-
-```typescript
-import { test as baseTest } from '../../../core/fixtures/base.fixture';
-import { LoginPage } from '../../../pages/LoginPage';
-
-export const test = baseTest.extend({
-  loginPage: async ({ page }, use) => {
-    await use(new LoginPage(page));  // pass page only
-  },
-});
-export { expect } from '@playwright/test';
-```
+**Never use:** `getByLabel()`, `getByRole()`, `nth-child()`, generated class names — unless BasePage
+helpers already wrap role-based UI (dropdowns).
 
 ---
 
 ## Checklist before committing a POM
 
-- [ ] `extends BasePage` from `pages/BasePage.ts`
+- [ ] `extends BasePage` from `pages/base-page.ts`
 - [ ] Constructor takes `(page: Page)` only
-- [ ] No `UiActions` import or instance
-- [ ] All locators are private getters
-- [ ] `waitForLoad()` uses `this.assertVisible()`
-- [ ] Interaction methods call `this.fillInput()` / `this.clickElement()` etc.
-- [ ] Assertion methods start with `assert`
+- [ ] Locators are `readonly` fields or parameterized methods — not N clones
+- [ ] No thin `fill*` / `click*` / `toggle*` one-liner wrappers
+- [ ] Repeating families use one parameterized locator (list helpers only for indexed catalogs that need count/first)
+
+- [ ] Specs use `page.fill` / `page.click` / `page.check` on those locators
+- [ ] Composite methods only for real multi-step flows (`login`, `submitForm`)
 - [ ] No hardcoded test data in the POM
-- [ ] File is in `automation/pages/` (not inside suites/)
+- [ ] File is in `automation/pages/`

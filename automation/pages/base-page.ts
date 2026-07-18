@@ -89,6 +89,18 @@ export class BasePage {
     await target.check()
   }
 
+  async uncheck(target: Locator): Promise<void> {
+    await target.uncheck()
+  }
+
+  async select(target: Locator, value: string): Promise<void> {
+    await target.selectOption(value)
+  }
+
+  async setFiles(target: Locator, filePath: string | string[]): Promise<void> {
+    await target.setInputFiles(filePath)
+  }
+
   /** Click an element by raw CSS/attribute selector (fallback for codegen-recorded actions). */
   async clickBySelector(selector: string): Promise<void> {
     await this.page.locator(selector).first().click()

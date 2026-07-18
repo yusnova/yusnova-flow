@@ -8,8 +8,12 @@ export interface RepeatingLocatorGroup {
   selectorTemplate: string
   uiAction: UiAction
   memberPropertyNames: string[]
+  /** Prefer data-testid when that is what the DOM uses. */
+  attr: 'data-testid' | 'data-test'
   listMethodName?: string
   listSelector?: string
+  /** True when members are radios (specs use BasePage.check). */
+  isRadioGroup?: boolean
 }
 
 export interface CollapsedLocators {
@@ -19,10 +23,31 @@ export interface CollapsedLocators {
 
 const INDEXED_DATA_TEST = /^([a-z0-9]+(?:-[a-z0-9]+)*)-(\d+)-([a-z0-9]+(?:-[a-z0-9]+)*)$/i
 
+/** Interactive kinds that may share a parameterized locator family. */
+const GROUPABLE_KINDS = new Set([
+  'input-radio',
+  'input-checkbox',
+  'button',
+  'link',
+  'input-text',
+  'input-email',
+  'input-password',
+  'input-number',
+  'select',
+  'textarea',
+])
+
+/**
+ * Collapse repeating data-test(id) families into parameterized locator methods.
+ *
+ * Order matters: shared-prefix (slug) runs before indexed so families like
+ * `skip-option-2-yard` become `skipOption('2-yard')` instead of `skipOptionYard(2)`.
+ */
 export function collapseRepeatingLocators(elements: ResolvedElement[]): CollapsedLocators {
   const excluded = new Set<string>()
   const groups: RepeatingLocatorGroup[] = []
 
+  groups.push(...detectSharedPrefixGroups(elements, excluded))
   groups.push(...detectIndexedGroups(elements, excluded))
   groups.push(...detectSlugPrefixGroups(elements, excluded, /^add-to-cart-(.+)$/i, 'addToCart', 'productSlug', 'add-to-cart-'))
   groups.push(...detectSlugPrefixGroups(elements, excluded, /^social-(.+)$/i, 'socialLink', 'network', 'social-'))
@@ -33,6 +58,24 @@ export function collapseRepeatingLocators(elements: ResolvedElement[]): Collapse
   return { singles, groups }
 }
 
+function dataTestOf(el: ResolvedElement): string | undefined {
+  return el.dataTest ?? el.dataTestId ?? el.dataTestIdHyphen
+}
+
+function attrOf(el: ResolvedElement): 'data-testid' | 'data-test' {
+  const selector = el.locator?.selector ?? ''
+  if (selector.includes('data-testid') || el.dataTestId || el.dataTestIdHyphen) return 'data-testid'
+  return 'data-test'
+}
+
+function isRadio(el: ResolvedElement): boolean {
+  return el.kind === 'input-radio'
+}
+
+function isGroupable(el: ResolvedElement): boolean {
+  return GROUPABLE_KINDS.has(el.kind)
+}
+
 function detectIndexedGroups(
   elements: ResolvedElement[],
   excluded: Set<string>,
@@ -40,8 +83,8 @@ function detectIndexedGroups(
   const buckets = new Map<string, Array<{ el: ResolvedElement; index: number }>>()
 
   for (const el of elements) {
-    const dataTest = el.dataTest
-    if (!dataTest) continue
+    const dataTest = dataTestOf(el)
+    if (!dataTest || excluded.has(el.propertyName)) continue
 
     const match = dataTest.match(INDEXED_DATA_TEST)
     if (!match) continue
@@ -63,19 +106,108 @@ function detectIndexedGroups(
     const [prefix, suffix] = key.split('::')
     if (!prefix || !suffix) continue
 
+    const sample = bucket[0]!.el
+    const attr = attrOf(sample)
     const methodName = `${kebabToCamel(prefix)}${cap(kebabToCamel(suffix))}`
     const memberPropertyNames = bucket.map((entry) => entry.el.propertyName)
     memberPropertyNames.forEach((name) => excluded.add(name))
 
+    // Indexed catalogs (item-N-title) may need list count/first assertions.
     groups.push({
       methodName,
       paramName: 'index',
       paramType: 'number',
-      selectorTemplate: `[data-test="${prefix}-\${index}-${suffix}"]`,
-      uiAction: bucket[0]!.el.uiAction,
+      selectorTemplate: `[${attr}="${prefix}-\${index}-${suffix}"]`,
+      uiAction: sample.uiAction,
       memberPropertyNames,
+      attr,
       listMethodName: `${methodName}s`,
-      listSelector: `[data-test^="${prefix}-"][data-test$="-${suffix}"]`,
+      listSelector: `[${attr}^="${prefix}-"][${attr}$="-${suffix}"]`,
+      isRadioGroup: bucket.every((entry) => isRadio(entry.el)),
+    })
+  }
+
+  return groups
+}
+
+/**
+ * Collapse families that share a multi-segment prefix, e.g.
+ * `plan-tier-gold` / `plan-tier-silver` → `planTier(optionId)`.
+ *
+ * Requires ≥2 static kebab segments so unrelated singles (e.g. `confirm-order`
+ * vs `start-again`) are not merged. All members must share the same kind.
+ */
+function detectSharedPrefixGroups(
+  elements: ResolvedElement[],
+  excluded: Set<string>,
+): RepeatingLocatorGroup[] {
+  const candidates = elements.filter((el) => {
+    const dataTest = dataTestOf(el)
+    return (
+      isGroupable(el) &&
+      Boolean(dataTest) &&
+      !excluded.has(el.propertyName) &&
+      (dataTest?.includes('-') ?? false)
+    )
+  })
+
+  const byPrefix = new Map<string, ResolvedElement[]>()
+
+  for (const el of candidates) {
+    const dataTest = dataTestOf(el)!
+    const parts = dataTest.split('-')
+    if (parts.length < 2) continue
+    // Keep at least two static segments (`waste-path-`, `address-option-`, `next-from-step`).
+    for (let keep = parts.length - 1; keep >= 2; keep -= 1) {
+      const prefix = `${parts.slice(0, keep).join('-')}-`
+      const suffix = parts.slice(keep).join('-')
+      if (!suffix) continue
+      const bucket = byPrefix.get(prefix) ?? []
+      if (!bucket.includes(el)) bucket.push(el)
+      byPrefix.set(prefix, bucket)
+    }
+  }
+
+  // Prefer longer prefixes so `address-option-` wins over shorter stems.
+  const ranked = [...byPrefix.entries()]
+    .filter(([, bucket]) => bucket.length >= 2)
+    .sort((a, b) => b[0].length - a[0].length || b[1].length - a[1].length)
+
+  const groups: RepeatingLocatorGroup[] = []
+  const claimed = new Set<string>()
+
+  for (const [prefix, bucket] of ranked) {
+    const free = bucket.filter((el) => !claimed.has(el.propertyName) && !excluded.has(el.propertyName))
+    if (free.length < 2) continue
+
+    const kinds = new Set(free.map((el) => el.kind))
+    if (kinds.size > 1) continue
+
+    const suffixes = new Set(free.map((el) => dataTestOf(el)!.slice(prefix.length)))
+    if (suffixes.size < 2) continue
+
+    const sample = free[0]!
+    const attr = attrOf(sample)
+    const staticStem = prefix.replace(/-$/, '')
+    const methodName = kebabToCamel(staticStem)
+    const paramName = 'optionId'
+
+    free.forEach((el) => {
+      claimed.add(el.propertyName)
+      excluded.add(el.propertyName)
+    })
+
+    // Slug/option families: parameterized member locator is enough.
+    // Do not emit redundant `fooOptions()` prefix lists (unused + awkward names).
+    groups.push({
+      methodName,
+      paramName,
+      paramType: 'string',
+      selectorTemplate: `[${attr}="${prefix}\${${paramName}}"]`,
+      uiAction: sample.uiAction,
+      memberPropertyNames: free.map((el) => el.propertyName),
+      attr,
+      isRadioGroup: free.every((el) => isRadio(el)),
     })
   }
 
@@ -86,10 +218,11 @@ function dedupeIdenticalDataTest(elements: ResolvedElement[], excluded: Set<stri
   const buckets = new Map<string, ResolvedElement[]>()
 
   for (const el of elements) {
-    if (!el.dataTest || excluded.has(el.propertyName)) continue
-    const bucket = buckets.get(el.dataTest) ?? []
+    const dataTest = dataTestOf(el)
+    if (!dataTest || excluded.has(el.propertyName)) continue
+    const bucket = buckets.get(dataTest) ?? []
     bucket.push(el)
-    buckets.set(el.dataTest, bucket)
+    buckets.set(dataTest, bucket)
   }
 
   for (const bucket of buckets.values()) {
@@ -111,23 +244,28 @@ function detectSlugPrefixGroups(
   const bucket: ResolvedElement[] = []
 
   for (const el of elements) {
-    if (!el.dataTest || excluded.has(el.propertyName)) continue
-    if (!pattern.test(el.dataTest)) continue
+    const dataTest = dataTestOf(el)
+    if (!dataTest || excluded.has(el.propertyName)) continue
+    if (!pattern.test(dataTest)) continue
     bucket.push(el)
   }
 
   if (bucket.length < 2) return []
 
   bucket.forEach((el) => excluded.add(el.propertyName))
+  const sample = bucket[0]!
+  const attr = attrOf(sample)
 
   return [
     {
       methodName,
       paramName,
       paramType: 'string',
-      selectorTemplate: `[data-test="${staticPrefix}\${${paramName}}"]`,
-      uiAction: bucket[0]!.uiAction,
+      selectorTemplate: `[${attr}="${staticPrefix}\${${paramName}}"]`,
+      uiAction: sample.uiAction,
       memberPropertyNames: bucket.map((el) => el.propertyName),
+      attr,
+      isRadioGroup: bucket.every((el) => isRadio(el)),
     },
   ]
 }
@@ -164,6 +302,19 @@ export function findRepeatingGroupForDataTest(
   groups: RepeatingLocatorGroup[],
   dataTest: string,
 ): { group: RepeatingLocatorGroup; arg: string | number } | null {
+  // Prefer string/slug groups first (shared-prefix / add-to-cart / social).
+  const prefixMatches = groups
+    .filter((group) => group.paramType === 'string' && group.selectorTemplate.includes('${'))
+    .map((group) => {
+      const staticPrefix = extractStaticPrefix(group.selectorTemplate)
+      if (!staticPrefix || !dataTest.startsWith(staticPrefix)) return null
+      return { group, arg: dataTest.slice(staticPrefix.length), prefixLen: staticPrefix.length }
+    })
+    .filter((entry): entry is { group: RepeatingLocatorGroup; arg: string; prefixLen: number } => Boolean(entry))
+    .sort((a, b) => b.prefixLen - a.prefixLen)
+
+  if (prefixMatches[0]) return { group: prefixMatches[0].group, arg: prefixMatches[0].arg }
+
   const indexed = parseIndexedDataTest(dataTest)
   if (indexed) {
     const methodName = `${kebabToCamel(indexed.prefix)}${cap(kebabToCamel(indexed.suffix))}`
@@ -184,4 +335,20 @@ export function findRepeatingGroupForDataTest(
   }
 
   return null
+}
+
+function extractStaticPrefix(selectorTemplate: string): string | null {
+  // [data-testid="address-option-${optionId}"] → address-option-
+  const match = selectorTemplate.match(/\[[^\]]+="([^"$]+)\$\{/)
+  return match?.[1] ?? null
+}
+
+/** Spec expression for a group member: `pageVar.method('arg')` or `pageVar.method(2)`. */
+export function pomGroupMemberExpr(
+  pageVar: string,
+  group: RepeatingLocatorGroup,
+  arg: string | number,
+): string {
+  const formatted = typeof arg === 'number' ? String(arg) : JSON.stringify(arg)
+  return `${pageVar}.${group.methodName}(${formatted})`
 }

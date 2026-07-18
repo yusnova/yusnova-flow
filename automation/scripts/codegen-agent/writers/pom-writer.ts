@@ -2,7 +2,6 @@ import * as fs from 'node:fs'
 import * as path from 'node:path'
 import Handlebars from 'handlebars'
 import { POM_TEMPLATE } from '../templates/pom.template'
-import { actionMethodName, groupActionMethodName } from '@codegen-agent/locators/element-naming'
 import { collapseRepeatingLocators, RepeatingLocatorGroup } from '@codegen-agent/locators/repeating-locators'
 import { toPageFileName } from '@codegen-agent/naming/page-name'
 import { PagePattern, PomLocatorMethod, PomMethod, PomMethodStep, PomTemplateData, ResolvedElement } from '../types'
@@ -38,7 +37,7 @@ export class PomWriter {
         selectorExpr: JSON.stringify(e.locator.selector),
       })),
       locatorMethods: buildLocatorMethods(groups),
-      methods: this.buildMethods(opts.pattern, pomSingles, groups),
+      methods: this.buildMethods(opts.pattern, pomSingles),
     }
 
     const compiled = hbs.compile(POM_TEMPLATE)
@@ -52,7 +51,6 @@ export class PomWriter {
   private buildMethods(
     pattern: PagePattern,
     singles: ResolvedElement[],
-    groups: RepeatingLocatorGroup[],
   ): PomMethod[] {
     if (pattern === 'login') {
       const login = buildLoginMethod(singles)
@@ -69,13 +67,9 @@ export class PomWriter {
       })
     }
 
-    for (const el of singles) {
-      methods.push(...buildActionMethodsForElement(el))
-    }
-
-    for (const group of groups) {
-      methods.push(...buildActionMethodsForGroup(group))
-    }
+    // Locator-first: never emit thin fill/click/check/select wrappers.
+    // Specs call BasePage.fill/click/check (or locator.selectOption) on POM locators.
+    // Only composites (login / submitForm / goto) belong here.
 
     const fillables = singles.filter((e) => e.uiAction === 'fillInput')
     const submitEl = singles.find((e) => e.uiAction === 'clickElement' && e.kind === 'button')
@@ -117,88 +111,6 @@ function buildLocatorMethods(groups: RepeatingLocatorGroup[]): PomLocatorMethod[
     }))
 
   return [...indexed, ...lists]
-}
-
-function buildActionMethodsForElement(el: ResolvedElement): PomMethod[] {
-  if (el.uiAction === 'clickElement') {
-    return []
-  }
-
-  const name = actionMethodName(el.propertyName, el.uiAction)
-
-  if (el.uiAction === 'fillInput') {
-    return [{
-      name,
-      params: 'value: string',
-      steps: [interactionStep(el.uiAction, el.propertyName, 'value')],
-    }]
-  }
-
-  if (el.uiAction === 'checkCheckbox') {
-    return [{
-      name,
-      params: 'check: boolean',
-      steps: [interactionStep(el.uiAction, el.propertyName, 'check')],
-    }]
-  }
-
-  if (el.uiAction === 'selectOption') {
-    return [{
-      name,
-      params: 'value: string',
-      steps: [interactionStep(el.uiAction, el.propertyName, 'value')],
-    }]
-  }
-
-  if (el.uiAction === 'uploadFile') {
-    return [{
-      name,
-      params: 'filePath: string',
-      steps: [interactionStep(el.uiAction, el.propertyName, 'filePath')],
-    }]
-  }
-
-  return []
-}
-
-function buildActionMethodsForGroup(group: RepeatingLocatorGroup): PomMethod[] {
-  const name = groupActionMethodName(group.methodName, group.uiAction)
-  const param = `${group.paramName}: ${group.paramType}`
-
-  switch (group.uiAction) {
-    case 'fillInput':
-      return [{
-        name,
-        params: `${param}, value: string`,
-        steps: [{ line: `await this.${group.methodName}(${group.paramName}).fill(value)` }],
-      }]
-    case 'selectOption':
-      return [{
-        name,
-        params: `${param}, value: string`,
-        steps: [{ line: `await this.${group.methodName}(${group.paramName}).selectOption(value)` }],
-      }]
-    case 'checkCheckbox':
-      return [{
-        name,
-        params: `${param}, check: boolean`,
-        steps: [{
-          line: `if (check) { await this.${group.methodName}(${group.paramName}).check() } else { await this.${group.methodName}(${group.paramName}).uncheck() }`,
-        }],
-      }]
-    case 'uploadFile':
-      return [{
-        name,
-        params: `${param}, filePath: string`,
-        steps: [{ line: `await this.${group.methodName}(${group.paramName}).setInputFiles(filePath)` }],
-      }]
-    default:
-      return [{
-        name,
-        params: param,
-        steps: [{ line: `await this.${group.methodName}(${group.paramName}).click()` }],
-      }]
-  }
 }
 
 function cleanWhitespace(raw: string): string {

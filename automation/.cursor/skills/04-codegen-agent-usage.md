@@ -68,11 +68,14 @@ npm run codegen:agent -- \
 
 | Codegen output | Generated output |
 |---------------|-----------------|
-| `page.getByLabel('Email').fill(v)` | `await featurePage.fillEmailInput(v)` |
-| `page.getByRole('button',{name:'Save'}).click()` | `await featurePage.clickSaveBtn()` |
+| `page.getByLabel('Email').fill(v)` | `await featurePage.fill(featurePage.emailInput, v)` |
+| `page.getByRole('button',{name:'Save'}).click()` | `await featurePage.click(featurePage.saveBtn)` |
+| `page.locator('[data-testid="waste-path-general"]').click()` | `await featurePage.click(featurePage.wastePath('general'))` |
 | `page.waitForTimeout(1000)` | **REMOVED** (anti-pattern) |
-| `page.locator('text=X').click()` | `await featurePage.clickXLink()` |
-| `page.goto(url)` | `await featurePage.navigate()` |
+| `page.goto(url)` | `await featurePage.page.goto(path)` |
+
+Locator-first: codegen does **not** emit thin `fill*` / `click*` / `toggle*` POM wrappers.
+Repeating `data-testid` families collapse to parameterized locators via `collapseRepeatingLocators`.
 
 ## Low-confidence locator warning
 

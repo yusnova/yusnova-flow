@@ -1,4 +1,3 @@
-import { actionMethodName } from '@codegen-agent/locators/element-naming'
 import { collapseRepeatingLocators } from '@codegen-agent/locators/repeating-locators'
 import { pomGroupListExpr, pomLocatorExpr, resolvePomElementByDataTest } from '@codegen-agent/writers/pom-ref'
 import {
@@ -206,13 +205,13 @@ function buildInventoryHappyPath(
 
   if ((text.includes('detail') || text.includes('open')) && titleGroup) {
     steps.push(
-      makeStep('Open product detail from list', [`await ${pageVar}.openItemTitle(0)`]),
+      makeStep('Open product detail from list', [`await ${pageVar}.click(${pageVar}.itemTitleLink(0))`]),
       makeStep('Assert detail page URL', [`await expect(${pageVar}.page).toHaveURL(/inventory-item/)`]),
     )
   } else if (text.includes('sort') && sortEl) {
     steps.push(
       makeStep('Sort products by price', [
-        `await ${pageVar}.${actionMethodName(sortEl.propertyName, 'selectOption')}('Price (low to high)')`,
+        `await ${pageVar}.select(${pageVar}.${sortEl.propertyName}, 'Price (low to high)')`,
       ]),
       makeStep('Assert sort applied', [
         productNames
@@ -222,7 +221,7 @@ function buildInventoryHappyPath(
     )
   } else if ((text.includes('cart') || text.includes('add')) && hasAddToCartGroup) {
     steps.push(
-      makeStep('Add product to cart', [`await ${pageVar}.addProductToCart('sample-product')`]),
+      makeStep('Add product to cart', [`await ${pageVar}.click(${pageVar}.addToCart('sample-product'))`]),
       makeStep('Assert cart badge', [
         cartEl
           ? `await expect(${pageVar}.${cartEl.propertyName}).toBeVisible()`
@@ -546,8 +545,8 @@ function buildInventoryNegativeBoundary(
     } else {
       steps.push(
         makeStep('Add first and last catalog products to cart', [
-          `await ${pageVar}.addProductToCart('sample-product')`,
-          `await ${pageVar}.addProductToCart('sample-red-tshirt')`,
+          `await ${pageVar}.click(${pageVar}.addToCart('sample-product'))`,
+          `await ${pageVar}.click(${pageVar}.addToCart('sample-red-tshirt'))`,
         ]),
         makeStep('Assert cart badge shows boundary count of two items', [
           `await expect(${pageVar}.page.locator('.shopping_cart_badge')).toHaveText('2')`,
@@ -601,10 +600,10 @@ function buildInventoryNegativeBoundary(
   } else {
     steps.push(
       makeStep('Open first and last products from the list', [
-        `await ${pageVar}.openItemTitle(0)`,
+        `await ${pageVar}.click(${pageVar}.itemTitleLink(0))`,
         `await expect(${pageVar}.page).toHaveURL(/inventory-item/)`,
         `await ${pageVar}.page.goBack()`,
-        `await ${pageVar}.openItemTitle(5)`,
+        `await ${pageVar}.click(${pageVar}.itemTitleLink(5))`,
       ]),
       makeStep('Assert boundary index opens detail page', [
         `await expect(${pageVar}.page).toHaveURL(/inventory-item/)`,

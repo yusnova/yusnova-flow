@@ -1,15 +1,16 @@
 import * as fs from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { CodegenAction, ResolvedElement } from '../types'
-import { actionMethodName, groupActionMethodName } from '@codegen-agent/locators/element-naming'
 import {
   specClickLinkByName,
   specClickLocator,
   specFillLocator,
+  specSelectLocator,
 } from './spec-pom-lines'
 import {
   collapseRepeatingLocators,
   findRepeatingGroupForDataTest,
+  pomGroupMemberExpr,
   RepeatingLocatorGroup,
 } from '@codegen-agent/locators/repeating-locators'
 import { gotoPathFromUrl } from '@codegen-agent/utils/url-utils'
@@ -123,7 +124,7 @@ export class CodegenAdapter {
     const locatorClick = line.match(/^await page\.locator\((['"])((?:\\.|(?!\1).)*)\1\)\.click\(\);?$/)
     if (locatorClick) {
       const selector = this.unquoteSelector(locatorClick[2] ?? '')
-      const mapped = this.mapSelectorToPomClick(selector, singles, pageVar)
+      const mapped = this.mapSelectorToPomClick(selector, singles, pageVar, groups)
       if (mapped) return mapped
       // Drop unmapped explore clicks instead of emitting clickBySelector.
       return null
@@ -183,8 +184,45 @@ export class CodegenAdapter {
     return null
   }
 
-  private formatRepeatingArg(arg: string | number): string {
-    return typeof arg === 'number' ? String(arg) : JSON.stringify(arg)
+  private mapSelectorToPomClick(
+    selector: string,
+    singles: ResolvedElement[],
+    pageVar: string,
+    groups: RepeatingLocatorGroup[] = [],
+  ): string | null {
+    const el = singles.find((entry) => entry.locator.selector === selector)
+    if (el) return this.specClickForElement(pageVar, el)
+
+    const testId =
+      selector.match(/\[data-testid=["']([^"']+)["']\]/)?.[1]
+      ?? selector.match(/\[data-test=["']([^"']+)["']\]/)?.[1]
+    if (testId) {
+      const repeating = findRepeatingGroupForDataTest(groups, testId)
+      if (repeating) {
+        return `await ${pageVar}.click(${pomGroupMemberExpr(pageVar, repeating.group, repeating.arg)})`
+      }
+      const byTestId = singles.find(
+        (entry) =>
+          entry.dataTest === testId
+          || entry.dataTestId === testId
+          || entry.locator.selector.includes(testId),
+      )
+      if (byTestId) return this.specClickForElement(pageVar, byTestId)
+      // Unmapped explore residue — drop rather than emit clickBySelector noise.
+      return null
+    }
+
+    const roleLink = selector.match(/^role=link\[name="(.+)"\]$/)
+    if (roleLink) {
+      return specClickLinkByName(pageVar, roleLink[1]!)
+    }
+
+    if (selector === 'a' || selector === 'nav a') {
+      const nav = singles.find((entry) => entry.locator.selector === selector || entry.propertyName === 'navLink')
+      if (nav) return this.specClickForElement(pageVar, nav)
+    }
+
+    return null
   }
 
   private transformDataTestAction(
@@ -195,15 +233,14 @@ export class CodegenAdapter {
     action: 'click' | 'selectOption',
     actionArgs = '',
   ): string {
-    const uiAction = action === 'selectOption' ? 'selectOption' : 'clickElement'
     const repeating = findRepeatingGroupForDataTest(groups, dataTest)
     if (repeating) {
-      const arg = this.formatRepeatingArg(repeating.arg)
-      const methodName = groupActionMethodName(repeating.group.methodName, uiAction)
+      const locator = pomGroupMemberExpr(pageVar, repeating.group, repeating.arg)
       if (action === 'selectOption') {
-        return `await ${pageVar}.${methodName}(${arg}, ${actionArgs})`
+        const value = actionArgs.replace(/^['"]|['"]$/g, '')
+        return specSelectLocator(pageVar, locator, value)
       }
-      return `await ${pageVar}.${methodName}(${arg})`
+      return `await ${pageVar}.click(${locator})`
     }
 
     const el = singles.find((entry) => entry.dataTest === dataTest || entry.dataTestId === dataTest)
@@ -212,9 +249,9 @@ export class CodegenAdapter {
       return null
     }
 
-    const methodName = actionMethodName(el.propertyName, uiAction)
     if (action === 'selectOption') {
-      return `await ${pageVar}.${methodName}(${actionArgs})`
+      const value = actionArgs.replace(/^['"]|['"]$/g, '')
+      return specSelectLocator(pageVar, `${pageVar}.${el.propertyName}`, value)
     }
     return this.specClickForElement(pageVar, el)
   }
@@ -316,7 +353,7 @@ export class CodegenAdapter {
           return this.transformDataTestAction(dataTest, singles, groups, pageVar, 'click')
         }
 
-        const mapped = this.mapSelectorToPomClick(selector, singles, pageVar)
+        const mapped = this.mapSelectorToPomClick(selector, singles, pageVar, groups)
         if (mapped) return mapped
         return `await ${pageVar}.clickBySelector(${JSON.stringify(selector)})`
       },
