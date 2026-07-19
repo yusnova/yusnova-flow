@@ -11,19 +11,18 @@ yusnova-flow/
 
 All `npm` commands below run from **`automation/`** unless noted.
 
----
+## Contents
 
-## Demo: STLC orchestrator
-
-Watch how **`stlc:orchestrator`** explores an app, scaffolds POM + fixtures, and writes meaningful Playwright tests end-to-end:
-
-**[▶ Auto-generate walkthrough](PASTE_VIDEO_URL_HERE)**
-
-What the video covers:
-
-- running `npm run stlc:orchestrator` against a live URL
-- automatic page discovery → Page Object + domain fixture
-- generated UI specs that follow real user flows (not empty stubs)
+- [Quick start](#quick-start)
+- [Run STLC (interactive)](#run-stlc-interactive)
+- [Core commands](#core-commands)
+- [Dashboard vs CLI](#dashboard-vs-cli)
+- [Environment](#environment)
+- [Layout (automation)](#layout-automation)
+- [STLC pipeline](#stlc-pipeline)
+- [CI](#ci)
+- [Debug](#debug)
+- [License](#license)
 
 ---
 
@@ -47,16 +46,45 @@ npm run report                # last HTML report
 cd ../frontend && npm install && npm run dev   # http://localhost:3000
 ```
 
-With `.env` pointing at localhost (`DEMO_BASE_URL`, `DEMO_API_BASE_URL`, `DEMO_SKIP_AUTH=true`), run STLC against it:
+Point `.env` at localhost (`DEMO_BASE_URL`, `DEMO_API_BASE_URL`, `DEMO_SKIP_AUTH=true`), then use the interactive STLC flow below.
+
+---
+
+## Run STLC (interactive)
+
+From `automation/`:
 
 ```bash
-cd ../automation
-npm run stlc:orchestrator -- \
-  --url http://localhost:3000 \
-  --domain booking \
-  --page BookingFlow \
-  --overwrite --skip-human-gates --headless --no-llm
+npm run stlc:orchestrator
 ```
+
+You get a guided setup (no long flag lists required):
+
+| Step | Prompt | What you enter |
+|------|--------|----------------|
+| 1 | **Target page URL** | Live page to analyse (e.g. `http://localhost:3000`) |
+| 2 | **Domain name** | Feature folder under `suites/` and `domains/` |
+| 3 | **Page class name** | Name for the generated Page Object |
+| 4 | **Requirement file** | Optional path to AC markdown — leave empty to auto-generate from the page |
+| 5 | **Run Playwright tests after generation?** | `N` = design + codegen only · `Y` = also execute + triage |
+| 6 | **Codegen options** | Overwrite existing files? · Show browser during generation? |
+
+Then a **Summary** is printed (URL, domain, page, pipeline, LLM on/off). Confirm with `Y` to start.
+
+After confirmation the pipeline runs phases such as:
+
+1. Analysing requirements…
+2. Building risk-based test strategy…
+3. Designing test cases…
+4. Reviewing test design (coverage & duplicates)…
+5. Generating POM, fixture, and spec…
+6. Validating generated code conventions…
+7. *(optional)* Executing Playwright tests… → Triaging failures…
+8. Computing quality gate recommendation…
+
+Outputs land under `tmp/stlc/{runId}/` plus generated files in `pages/`, `domains/`, and `suites/`.
+
+For flags and advanced use: `npm run stlc:orchestrator -- --help`.
 
 ---
 
@@ -81,7 +109,7 @@ npm run stlc:orchestrator -- --help
 | Use | When |
 |-----|------|
 | `codegen:agent` | Fast POM + spec from a URL |
-| `stlc:orchestrator` | Requirements, design coverage, quality report, optional `--run-tests` |
+| `stlc:orchestrator` | Requirements, design coverage, quality report, optional test run |
 
 Deep dives: `automation/.cursor/skills/` (POM, API patterns, codegen, STLC, MCP/dashboard/explorer).
 
@@ -131,26 +159,24 @@ automation/
 
 **Selectors:** prefer `data-testid` / `data-test` → stable `id` → role+name. Avoid dynamic IDs and hashed CSS classes.
 
-**POM:** page class in `pages/`, fixture in `domains/{feature}/`, specs import `@domains/...`. Mark hand-written tests with `// @stlc:manual` so `--overwrite` keeps them.
+**POM:** page class in `pages/`, fixture in `domains/{feature}/`, specs import `@domains/...`. Mark hand-written tests with `// @stlc:manual` so overwrite keeps them.
 
 ---
 
-## STLC in brief
+## STLC pipeline
 
-```bash
-npm run stlc:orchestrator -- \
-  --url https://your-app.example/path \
-  --domain myFeature \
-  --page MyFeaturePage \
-  --requirement-file ./requirements/example.md \
-  --overwrite --skip-human-gates
-```
+Interactive flow is the default path — see [Run STLC (interactive)](#run-stlc-interactive).
 
-Phases: requirements → planning → design → review → codegen → validate → (execution) → triage → reporting.
+Phases (generate-only vs full run):
 
-Outputs: `tmp/stlc/{runId}/state.json`, `quality-report.md`, plus POM/spec under `pages/` / `suites/` / `domains/`.
+| Phase | Always | With “run tests = Yes” |
+|-------|--------|-------------------------|
+| Requirements → planning → design → review | ✓ | ✓ |
+| Codegen + convention validate | ✓ | ✓ |
+| Execution + triage | | ✓ |
+| Quality reporting | ✓ | ✓ |
 
-Requirements are **opt-in** (`--requirement` / `--requirement-file`). Unrelated files under `requirements/` are ignored.
+Requirements are **opt-in** (wizard step 4, or `--requirement` / `--requirement-file`). Unrelated files under `requirements/` are ignored.
 
 ---
 
